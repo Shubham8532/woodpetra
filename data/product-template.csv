@@ -1,0 +1,2 @@
+name,description,price,category,image_url,website_url,product_url,stock,currency,payment_link,sku,color,size,required_fields,attributes
+Product Name,Product Description,999,Category,https://example.com/image.jpg,https://yourstore.com,https://yourstore.com/product-name,10,INR,,SKU001,Black,M,"[""color"",""size""]","{""color"":[""Black""],""size"":[""M""]}"

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shop All Products — Shubham Fashion</title>
+  <meta name="description" content="Browse all premium fashion products by Shubham Fashion. Filter by category, price, and more. T-Shirts, Shirts, Jeans, Hoodies and more." />
+  <meta name="keywords" content="shop fashion, buy clothes online, premium t-shirts, men women fashion India" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👗</text></svg>" />
+</head>
+<body>
+
+  <!-- ═══════════════ NAVIGATION ═══════════════ -->
+  <header>
+    <nav class="navbar" id="navbar" role="navigation" aria-label="Main navigation">
+      <div class="container nav-inner">
+        <a href="index.html" class="nav-logo" aria-label="Shubham Fashion Home">
+          <span class="logo-main">Shubham Fashion</span>
+          <span class="logo-sub">Premium Apparel</span>
+        </a>
+        <div class="nav-links" role="menubar">
+          <a href="index.html"    role="menuitem">Home</a>
+          <a href="products.html" role="menuitem">Products</a>
+          <a href="about.html"    role="menuitem">About</a>
+          <a href="contact.html"  role="menuitem">Contact</a>
+          <a href="shipping.html" role="menuitem">Shipping</a>
+          <a href="returns.html"  role="menuitem">Returns</a>
+        </div>
+        <div class="nav-actions">
+          <button class="nav-icon-btn" id="nav-search-btn" aria-label="Search products" title="Search">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            </svg>
+          </button>
+          <button class="nav-icon-btn" aria-label="Shopping cart" title="Cart">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+              <line x1="3" y1="6" x2="21" y2="6"/>
+              <path d="M16 10a4 4 0 0 1-8 0"/>
+            </svg>
+            <span class="cart-count">0</span>
+          </button>
+          <button class="hamburger" id="hamburger" aria-label="Open mobile menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+    </nav>
+    <nav class="mobile-nav" id="mobile-nav" aria-label="Mobile navigation">
+      <a href="index.html">Home</a>
+      <a href="products.html">Products</a>
+      <a href="about.html">About Us</a>
+      <a href="contact.html">Contact</a>
+      <a href="shipping.html">Shipping</a>
+      <a href="returns.html">Returns</a>
+    </nav>
+  </header>
+
+  <main class="page-content">
+
+    <!-- ── Page Hero ── -->
+    <section class="page-hero" aria-label="Products page header">
+      <div class="container">
+        <nav class="breadcrumb" aria-label="Breadcrumb">
+          <a href="index.html">Home</a>
+          <span>›</span>
+          <span aria-current="page">Products</span>
+        </nav>
+        <h1>All Products</h1>
+        <p>Discover premium fashion designed for every occasion.</p>
+      </div>
+    </section>
+
+    <!-- ── Filters Bar ── -->
+    <div class="filters-bar" role="search" aria-label="Product filters">
+      <div class="container filters-inner">
+
+        <!-- Search -->
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input
+            type="search"
+            id="search-input"
+            class="search-input"
+            placeholder="Search name, colour, material…"
+            aria-label="Search products"
+            autocomplete="off"
+          />
+        </div>
+
+        <!-- Category Filter -->
+        <select id="category-filter" class="filter-select" aria-label="Filter by category">
+          <option value="">All Categories</option>
+          <!-- Populated by JS from CSV data -->
+        </select>
+
+        <!-- Sort -->
+        <select id="sort-filter" class="filter-select" aria-label="Sort products">
+          <option value="">Sort: Default</option>
+          <option value="price-asc">Price: Low to High</option>
+          <option value="price-desc">Price: High to Low</option>
+          <option value="name-asc">Name: A–Z</option>
+          <option value="name-desc">Name: Z–A</option>
+          <option value="stock-desc">Most Available</option>
+          <option value="stock-asc">Low Stock First</option>
+        </select>
+
+        <!-- Results count -->
+        <div class="filters-right">
+          <span id="results-count" class="results-count" aria-live="polite">Loading…</span>
+          <button class="btn btn-outline btn-sm" onclick="clearFilters()" id="clear-filters-btn">Clear All</button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── Products Grid ── -->
+    <section class="products-section" aria-labelledby="products-heading">
+      <div class="container">
+        <h2 id="products-heading" class="sr-only">Product Listing</h2>
+
+        <div class="products-main" id="products-main-grid" role="list" aria-label="Product list">
+          <!-- Dynamically populated from CSV via script.js -->
+        </div>
+
+        <!-- Pagination -->
+        <nav id="pagination" class="pagination" aria-label="Product pages"></nav>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ═══════════════ FOOTER ═══════════════ -->
+  <footer class="footer" role="contentinfo">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <span class="logo-main">Shubham Fashion</span>
+          <span class="logo-sub">Premium Apparel</span>
+          <p>Crafting premium everyday fashion for the modern Indian wardrobe.</p>
+          <div class="social-links">
+            <a href="#" class="social-link" aria-label="Instagram">📷</a>
+            <a href="#" class="social-link" aria-label="Facebook">📘</a>
+            <a href="#" class="social-link" aria-label="Twitter/X">🐦</a>
+            <a href="#" class="social-link" aria-label="YouTube">▶️</a>
+          </div>
+        </div>
+        <div class="footer-col">
+          <h4>Shop</h4>
+          <a href="products.html?category=T-Shirt">T-Shirts</a>
+          <a href="products.html?category=Shirt">Shirts</a>
+          <a href="products.html?category=Jeans">Jeans</a>
+          <a href="products.html?category=Hoodie">Hoodies</a>
+          <a href="products.html">All Products</a>
+        </div>
+        <div class="footer-col">
+          <h4>Company</h4>
+          <a href="index.html">Home</a>
+          <a href="about.html">About Us</a>
+          <a href="contact.html">Contact</a>
+          <a href="shipping.html">Shipping Policy</a>
+          <a href="returns.html">Return Policy</a>
+        </div>
+        <div class="footer-col">
+          <h4>Get in Touch</h4>
+          <div class="footer-contact-item"><span>📍</span><span>12 Fashion Street, Mumbai 400001</span></div>
+          <div class="footer-contact-item"><span>📞</span><span>+91 98765 43210</span></div>
+          <div class="footer-contact-item"><span>✉️</span><span>hello@shubhamfashion.in</span></div>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>© 2026 Shubham Fashion. All rights reserved.</p>
+        <div class="footer-bottom-links">
+          <a href="shipping.html">Shipping</a>
+          <a href="returns.html">Returns</a>
+          <a href="contact.html">Support</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ═══════════════ PRODUCT MODAL ═══════════════ -->
+  <div class="modal-overlay" id="product-modal" role="dialog" aria-modal="true" aria-label="Product details">
+    <div class="modal">
+      <button class="modal-close" id="modal-close-btn" aria-label="Close modal">✕</button>
+      <div class="modal-inner">
+        <div class="modal-image">
+          <img id="modal-img" src="" alt="" loading="lazy" />
+        </div>
+        <div class="modal-details">
+          <div id="modal-category" class="modal-category"></div>
+          <h2 id="modal-name"  class="modal-name"></h2>
+          <div id="modal-price" class="modal-price"></div>
+          <div id="modal-rating" class="modal-rating"></div>
+          <p id="modal-description" class="modal-description"></p>
+          <div class="modal-specs">
+            <div class="spec-item"><span class="spec-label">Stock</span><span id="modal-stock" class="spec-value"></span></div>
+            <div class="spec-item"><span class="spec-label">Colour</span><span id="modal-color" class="spec-value"></span></div>
+            <div class="spec-item"><span class="spec-label">Size</span><span id="modal-size" class="spec-value"></span></div>
+            <div class="spec-item"><span class="spec-label">Material</span><span id="modal-material" class="spec-value"></span></div>
+            <div class="spec-item"><span class="spec-label">Fit</span><span id="modal-fit" class="spec-value"></span></div>
+            <div class="spec-item"><span class="spec-label">Collection</span><span id="modal-collection" class="spec-value"></span></div>
+            <div class="spec-item"><span class="spec-label">SKU</span><span id="modal-sku" class="spec-value" style="font-size:0.78rem;color:var(--color-muted)"></span></div>
+          </div>
+          <div class="modal-actions">
+            <button class="btn btn-accent" id="modal-add-btn">Add to Cart</button>
+            <button class="btn btn-outline" onclick="closeModal()">Continue Shopping</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <button
+    id="back-to-top" aria-label="Back to top" title="Back to top"
+    style="position:fixed;bottom:88px;right:24px;z-index:900;width:44px;height:44px;border-radius:50%;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.1rem;opacity:0;pointer-events:none;transition:opacity 0.3s;box-shadow:var(--shadow-md);border:none;cursor:pointer;"
+  >↑</button>
+
+  <!-- Paste Woodpetra Chatbot Script Here -->
+  <div id="chatbot-container"></div>
+
+  <script src="script.js"></script>
+  <script src="https://woodpetra.in/widget.js" data-bot-id="afb197b9-1fcf-42b6-a799-68f2342d5e02"></script>
+  <!-- Screen-reader only utility -->
+  <style>.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}</style>
+</body>
+</html>

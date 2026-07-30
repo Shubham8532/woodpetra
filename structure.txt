@@ -1,0 +1,47 @@
+shopping-assistant/
+
+│
+
+├── backend/
+
+│   ├── app.py
+│
+│   ├── graph.py
+│
+│   ├── config.py
+│
+│   ├── prompts.py
+│
+│   ├── state.py
+│
+│   ├── models.py
+│
+│   ├── tools.py
+│
+│   ├── db.py
+│
+│   ├── utils.py
+│
+│   └── requirements.txt
+│
+├── frontend/
+│
+│   ├── index.html
+│
+│   ├── style.css
+│
+│   └── script.js
+│
+├── data/
+│
+│   └── products.csv
+│
+├── docs/
+│
+│   ├── Architecture.md
+│
+│   ├── API.md
+│
+│   └── Flow.md
+│
+└── README.md

@@ -1,0 +1,336 @@
+I like that you're asking for this before writing any code.
+
+This is exactly how real projects start: Architecture → Plan → Implementation, not "create app.py" immediately.
+
+Let's design it like a software engineer.
+
+🛒 Project Name
+
+AI Shopping Assistant
+
+Objective:
+Build an intelligent shopping assistant that understands natural language, extracts shopping intent, searches a product database, remembers conversation context, and recommends products.
+
+This is not a generic chatbot.
+
+It is an AI-powered product search and shopping assistant.
+
+End Goal
+
+A user can ask naturally:
+
+Show me blue cotton T-Shirts under ₹1000
+
+Cheapest jeans
+
+Suggest something for college
+
+Do you have caps?
+
+Only black ones
+
+Another one
+
+What's its price?
+
+Compare the first two.
+
+The assistant understands the request, searches products, and responds naturally.
+
+Final Architecture
+                 USER
+                  │
+                  ▼
+         Website / API Client
+                  │
+          POST /chat request
+                  │
+                  ▼
+             FastAPI Backend
+                  │
+                  ▼
+             LangGraph Graph
+                  │
+     ┌────────────┴────────────┐
+     │                         │
+Intent Extraction         Conversation State
+     │                         │
+     └────────────┬────────────┘
+                  │
+          Product Search Tool
+                  │
+                  ▼
+             Supabase Database
+                  │
+                  ▼
+           Matching Products
+                  │
+                  ▼
+         Response Generation
+                  │
+                  ▼
+             JSON Response
+                  │
+                  ▼
+                Website
+Tech Stack
+Backend
+Python
+FastAPI
+
+Reason:
+Simple REST API.
+
+AI
+LangGraph
+LangChain
+
+Reason:
+
+State
+Memory
+Nodes
+Structured Output
+Easy expansion
+LLM
+
+Initially I recommend:
+
+Gemini
+
+Reasons:
+
+Free API quota
+Good structured output
+Fast
+Easy setup
+
+Later you can switch to GPT or Claude with almost no code changes.
+
+Local Models?
+Ollama
+
+We'll discuss this separately.
+
+Database
+
+Supabase
+
+Why?
+
+It's just PostgreSQL with a friendly UI.
+
+Later you learn SQL naturally.
+
+Frontend
+
+Not now.
+
+Later
+
+HTML
+
+CSS
+
+JavaScript
+
+Popup widget.
+
+Development Phases
+Phase 0
+
+Project Setup
+
+Goal:
+
+Create clean project.
+
+Result:
+
+Project runs.
+Phase 1
+
+Intent Extraction
+
+Input
+
+Cheapest blue t-shirt under ₹1000
+
+Output
+
+{
+  "intent":"search",
+  "category":"T-Shirt",
+  "color":"Blue",
+  "price_max":1000,
+  "sort":"price_asc"
+}
+
+No database.
+
+No frontend.
+
+Only LLM.
+
+Phase 2
+
+Database Integration
+
+Input
+
+Structured JSON
+
+↓
+
+Search Supabase
+
+↓
+
+Return products
+
+No natural language yet.
+
+Only Python objects.
+
+Example
+
+[
+ {
+  "name":"UrbanFlex",
+  "price":749
+ }
+]
+Phase 3
+
+Natural Response
+
+Instead of returning Python objects
+
+LLM says
+
+I found three blue T-Shirts under ₹1000.
+
+• UrbanFlex ₹749
+
+• DailyCotton ₹399
+
+Phase 4
+
+Conversation Memory
+
+Now support
+
+another one
+
+only black
+
+what's its price
+
+show cotton
+
+
+without repeating everything.
+
+Phase 5
+
+Recommendations
+
+Instead of
+
+Show jeans
+
+User can ask
+
+Suggest something for office
+
+College wear
+
+Party wear
+
+Gym
+
+Formal
+
+LLM converts lifestyle into filters.
+
+Phase 6
+
+Product Details
+
+Tell me more.
+
+Material?
+
+Available sizes?
+
+Compare these.
+
+Phase 7
+
+Cart
+
+Add to cart
+
+Remove
+
+Checkout
+
+Phase 8
+
+Website Widget
+
+Create
+
+<script src="chatbot.js"></script>
+
+Anyone embeds your chatbot.
+
+LangGraph Design
+
+Initially
+
+START
+
+↓
+
+Intent Node
+
+↓
+
+Search Node
+
+↓
+
+Response Node
+
+↓
+
+END
+
+Later
+
+START
+
+↓
+
+Intent
+
+↓
+
+Search
+
+↓
+
+Recommendation
+
+↓
+
+Cart
+
+↓
+
+Checkout
+
+↓
+
+END
