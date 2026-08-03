@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://cdnjs.cloudflare.com" />
-  <link rel="stylesheet" href="../css/style.css" />
+  <link rel="stylesheet" href="/static/css/style.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👗</text></svg>" />
 </head>
@@ -292,14 +292,14 @@
 
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
   <button id="back-to-top" aria-label="Back to top" style="position:fixed;bottom:88px;right:24px;z-index:900;width:44px;height:44px;border-radius:50%;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.1rem;opacity:0;pointer-events:none;transition:opacity 0.3s;box-shadow:var(--shadow-md);border:none;cursor:pointer;">↑</button>
+<!-- Woodpetra Chatbot Scripts -->
+<div id="chatbot-container"></div>
+<!-- Old Woodpetra Widget -->
+<script src="https://woodpetra.in/widget.js" data-bot-id="2849b4a9-b152-4ebb-9e0c-b2754c570a61"></script>
 
-  <!-- Paste Woodpetra Chatbot Script Here -->
-  <div id="chatbot-container"></div>
-  <!-- Old Woodpetra Widget (Stays at Bottom-Right) -->
-  <script src="https://woodpetra.in/widget.js" data-bot-id="2849b4a9-b152-4ebb-9e0c-b2754c570a61"></script>
-  
-  <!-- Custom LangGraph Shopping Assistant (Positioned Top-Right) -->
-  <script src="../js/chat_widget.js"></script>
-  <script src="../js/script.js"></script>
+<!-- Custom LangGraph Shopping Assistant -->
+<script src="/static/js/chat_widget.js"></script>
+<!-- Main Application Script -->
+<script src="/static/js/script.js"></script>
 </body>
 </html>
