@@ -18,6 +18,10 @@ class ChatRequest(BaseModel):
     query: str
     thread_id: str
 
+@app.get("/")
+def read_root():
+    return {"status": "ok", "message": "Shubham Fashion Assistant API is running"}
+
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     config = {
