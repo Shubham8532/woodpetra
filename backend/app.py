@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -7,7 +9,6 @@ from backend.graph import workflow
 
 app = FastAPI()
 
-# Enable CORS so your HTML frontend can make requests to your API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,19 +17,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files (CSS, JS, images, index.html) from the frontend directory
-app.mount("/static", StaticFiles(directory="frontend"), name="static")
+# Resolve absolute path to the root working directory (/app)
+BASE_DIR = Path(__file__).resolve().parent.parent
+FRONTEND_DIR = BASE_DIR / "frontend"
+
+# Mount static files dynamically using absolute paths
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 class ChatRequest(BaseModel):
     query: str
     thread_id: str
 
-# Serve index.html on root route instead of raw JSON
 @app.get("/")
 async def read_root():
-    return FileResponse("frontend/index.html")
+    index_file = FRONTEND_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file))
+    return {"status": "ok", "message": "Shubham Fashion Assistant API is running (frontend folder missing in container build context)"}
 
-# Health check route for Azure probes
 @app.get("/health")
 def health_check():
     return {"status": "ok", "message": "Shubham Fashion Assistant API is running"}
