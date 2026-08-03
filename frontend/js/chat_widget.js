@@ -5,6 +5,9 @@
     sessionStorage.setItem("woodpetra_session_id", threadId);
   }
 
+  // Dynamic API URL: automatically switches between localhost and Azure domain
+  const API_URL = `${window.location.origin}/api/chat`;
+
   const style = document.createElement("style");
   style.innerHTML = `
     .chat-widget-button {
@@ -249,7 +252,6 @@
     return text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").trim();
   }
 
-  // Anchor the view to the top of the user's message
   function scrollToElement(elem) {
     setTimeout(() => {
       elem.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -260,26 +262,27 @@
     const query = chatInput.value.trim();
     if (!query) return;
 
-    // Track the user message element to use it as our scroll anchor
     const userMsgElem = appendMessage(query, "user");
     chatInput.value = "";
 
     const typingElem = appendMessage("Thinking...", "bot");
-
-    // Scroll to user query while typing
     scrollToElement(userMsgElem);
 
     try {
-      const res = await fetch("http://localhost:8000/api/chat", {
+      const res = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: query, thread_id: threadId }),
       });
 
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+
       const data = await res.json();
       typingElem.remove();
 
-      const cleanResponseText = cleanMarkdownLinks(data.response);
+      const cleanResponseText = cleanMarkdownLinks(data.response || "No response received.");
       appendMessage(cleanResponseText, "bot");
 
       if (data.displayed_products && data.displayed_products.length > 0) {
@@ -290,9 +293,9 @@
         renderSimilarSection(data.similar_products);
       }
 
-      // Re-pin scroll position to the user's message so text stays fully visible
       scrollToElement(userMsgElem);
     } catch (err) {
+      console.error("Chat Error:", err);
       typingElem.innerText = "Error connecting to server. Please try again.";
     }
   }
@@ -306,10 +309,9 @@
   }
 
   function createCardHTML(p) {
-    // Compact formatting: Grey • M • In Stock
     const color = p.color || "";
     const size = p.size ? p.size : "";
-    const stock = "In Stock"; // Or map to p.stock if your backend returns dynamic stock
+    const stock = "In Stock";
     
     const metaArr = [color, size, stock].filter(Boolean);
     const metaText = metaArr.join(" • ");
