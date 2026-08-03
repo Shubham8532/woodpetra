@@ -17,11 +17,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Resolve absolute path to the root working directory (/app)
 BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
+TEMPLATE_DIR = FRONTEND_DIR / "template"
 
-# Mount static files dynamically using absolute paths
+# Mount frontend directory for CSS/JS
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
@@ -31,10 +31,10 @@ class ChatRequest(BaseModel):
 
 @app.get("/")
 async def read_root():
-    index_file = FRONTEND_DIR / "index.html"
+    index_file = TEMPLATE_DIR / "index.html"
     if index_file.exists():
         return FileResponse(str(index_file))
-    return {"status": "ok", "message": "Shubham Fashion Assistant API is running (frontend folder missing in container build context)"}
+    return {"status": "ok", "message": f"Looking for {index_file} but not found."}
 
 @app.get("/health")
 def health_check():
