@@ -11,7 +11,7 @@
 /* ─────────────────────────────────────────
    CONSTANTS
 ───────────────────────────────────────── */
-const CSV_FILE   = 'Shubham_Fashion_Current_Template.csv';
+const CSV_FILE   = '../../data/Shubham_Fashion_Current_Template.csv';
 const CSV_CDN    = 'https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js';
 const PLACEHOLDER_BASE = 'https://placehold.co/600x600?text=';
 const ITEMS_PER_PAGE   = 12;

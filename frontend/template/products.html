@@ -6,7 +6,11 @@
   <title>Shop All Products — Shubham Fashion</title>
   <meta name="description" content="Browse all premium fashion products by Shubham Fashion. Filter by category, price, and more. T-Shirts, Shirts, Jeans, Hoodies and more." />
   <meta name="keywords" content="shop fashion, buy clothes online, premium t-shirts, men women fashion India" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" />
+  <link rel="stylesheet" href="../css/style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👗</text></svg>" />
 </head>
 <body>
@@ -225,8 +229,12 @@
   <!-- Paste Woodpetra Chatbot Script Here -->
   <div id="chatbot-container"></div>
 
-  <script src="script.js"></script>
-  <script src="https://woodpetra.in/widget.js" data-bot-id="afb197b9-1fcf-42b6-a799-68f2342d5e02"></script>
+  <script src="../js/script.js"></script>
+  <!-- Old Woodpetra Widget (Stays at Bottom-Right) -->
+  <script src="https://woodpetra.in/widget.js" data-bot-id="2849b4a9-b152-4ebb-9e0c-b2754c570a61"></script>
+  
+  <!-- Custom LangGraph Shopping Assistant (Positioned Top-Right) -->
+  <script src="../js/chat_widget.js"></script>
   <!-- Screen-reader only utility -->
   <style>.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}</style>
 </body>

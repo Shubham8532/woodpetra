@@ -1,0 +1,132 @@
+Last Shopping Context
+
+Product:
+SummerLite Shorts
+
+Category:
+Shorts
+
+Price:
+1849
+
+Color:
+Grey
+
+Size:
+M
+
+=====================
+
+If you want 99% reliability
+
+
+
+Don't make the model infer.
+
+
+
+Store structured shopping context.
+
+
+
+Example:
+
+
+
+last_product = "SummerLite Shorts"
+
+
+
+or
+
+
+
+last_products = [...]
+
+
+
+Then when the user says
+
+
+
+What is the price?
+
+
+
+you simply do
+
+
+
+if (
+
+    intent.intent == IntentType.DETAILS
+
+    and intent.product_name is None
+
+):
+
+    intent.product_name = last_product
+
+
+
+Zero hallucination.
+
+
+
+Zero ambiguity.
+
+
+
+That's how production shopping assistants usually do it.
+
+=====================
+
+
+I'd actually go one step further
+
+Once your graph becomes more mature, I'd split generate_response into two paths.
+
+Shopping response
+search_products
+      │
+      ▼
+shopping_response (8B)
+
+Most shopping responses are just formatting database results.
+
+Example:
+
+SummerLite Shorts cost ₹1849.
+
+or
+
+We found 4 hoodies under ₹1000.
+
+An 8B model can do this perfectly.
+
+Reserve the 70B model for cases like:
+
+comparisons
+recommendations
+explanations
+style advice
+"Which one is better for gym?"
+"Recommend something similar"
+
+That can cut costs significantly.
+
+Even better architecture
+Router --------------------> 8B
+
+Intent Extraction ---------> 70B
+
+Search --------------------> Python
+
+Simple Shopping Reply -----> 8B
+
+Complex Recommendation ----> 70B
+
+General Chat -------------> 70B
+
+
+======================================

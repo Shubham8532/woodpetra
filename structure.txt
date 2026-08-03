@@ -45,3 +45,282 @@ shopping-assistant/
 │   └── Flow.md
 │
 └── README.md
+
+
+
+The roadmap I'd follow
+
+I think this is a nice progression.
+
+✅ Milestone 1 (Done)
+Router
+
+↓
+
+Intent
+
+↓
+
+Search
+
+↓
+
+Response
+🚧 Milestone 2 (Done)
+General Chat
+
++
+
+Shopping
+
+Router decides which branch.
+
+🚀 Milestone 3
+Conversation Memory
+InMemorySaver
+thread_id
+Follow-up questions
+Previous products
+Previous intent
+
+Example
+
+Show me shirts
+
+↓
+
+Which one is cheaper?
+
+↓
+
+What about XXL?
+
+↓
+
+Show blue ones.
+Milestone 4
+Better Search
+
+Right now
+
+category
+color
+price
+
+Later
+
+if product_name
+
+↓
+
+search by name
+
+else
+
+↓
+
+filter search
+
+else
+
+↓
+
+recommendation
+
+Separate search strategies.
+
+Milestone 5
+Product Comparison
+Compare
+
+↓
+
+ClassicCheck
+
+WeekendWear
+
+Generate a comparison table.
+
+Milestone 6
+Clarification Agent
+
+Example
+
+I want a shirt
+
+Agent
+
+Sure.
+
+What size?
+
+What color?
+
+instead of guessing.
+
+This introduces multi-turn slot filling.
+
+Milestone 7
+Cart Tool
+Add to cart
+
+Remove
+
+Update quantity
+
+Show cart
+
+First real tool/action.
+
+Milestone 8
+Order Tool
+Checkout
+
+Address
+
+Payment
+
+Order status
+Milestone 9
+Recommendation Engine
+
+Instead of
+
+recommend shoes
+
+becoming
+
+SELECT *
+
+Agent reasons
+
+Budget?
+
+Occasion?
+
+Previous purchases?
+
+Trending?
+
+Stock?
+Milestone 10
+Customer Memory
+
+Store in Supabase
+
+Favorite color
+
+Size
+
+Previous orders
+
+Frequently bought category
+
+Then
+
+Show me shirts
+
+↓
+
+Knows
+
+Size XL
+
+↓
+
+Filters automatically.
+Milestone 11
+RAG
+
+Instead of
+
+Only CSV
+
+also search
+
+Shipping Policy
+
+Return Policy
+
+FAQ
+
+Warranty
+
+Size Guide
+
+using embeddings.
+
+Milestone 12
+Multi-Agent
+Router
+
+        │
+
+────────┼─────────
+
+Shopping
+
+Support
+
+Order
+
+Recommendation
+
+Returns
+
+Each has its own graph.
+
+Milestone 13
+Human Approval
+Refund
+
+↓
+
+Ask manager
+
+↓
+
+Continue
+
+One of LangGraph's coolest features.
+
+Milestone 14
+Background Tasks
+Price drop
+
+↓
+
+Notify user
+
+Inventory changes
+
+↓
+
+Email
+Milestone 15
+Production
+Next.js
+
+↓
+
+FastAPI
+
+↓
+
+LangGraph
+
+↓
+
+Postgres Checkpointer
+
+↓
+
+Supabase
+
+↓
+
+Redis
+
+↓
+
+LLM
