@@ -20,10 +20,15 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 TEMPLATE_DIR = FRONTEND_DIR / "template"
+DATA_DIR = BASE_DIR / "data"
 
 # Mount /static so /static/css/style.css and /static/js/script.js resolve correctly
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+# Mount /data so script.js can fetch the CSV file for product cards
+if DATA_DIR.exists():
+    app.mount("/data", StaticFiles(directory=str(DATA_DIR)), name="data")
 
 class ChatRequest(BaseModel):
     query: str
