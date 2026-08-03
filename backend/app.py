@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from backend.graph import workflow
 
@@ -14,12 +16,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files (CSS, JS, images, index.html) from the frontend directory
+app.mount("/static", StaticFiles(directory="frontend"), name="static")
+
 class ChatRequest(BaseModel):
     query: str
     thread_id: str
 
+# Serve index.html on root route instead of raw JSON
 @app.get("/")
-def read_root():
+async def read_root():
+    return FileResponse("frontend/index.html")
+
+# Health check route for Azure probes
+@app.get("/health")
+def health_check():
     return {"status": "ok", "message": "Shubham Fashion Assistant API is running"}
 
 @app.post("/api/chat")
@@ -33,40 +44,10 @@ async def chat_endpoint(request: ChatRequest):
         {
             "query": request.query
         },
-        config = config
+        config=config
     )
     return {
         "response": result.get("response", "Sorry, something went wrong."),
         "displayed_products": result.get("displayed_products", []),
         "similar_products": result.get("similar_products", [])
     }
-
-
-
-
-# config = {
-#     "configurable": {
-#         "thread_id": "customer_1"
-#     }
-# }
-
-# result = workflow.invoke(
-#     {        
-#         "query": "Whats the price"
-#     },
-#     config=config
-# )
-
-# print(result)
-
-# while True:
-#     user_input = input("\nUser: ")
-#     if user_input.strip().lower() in ["exit", "quit"]:
-#         break
-        
-#     result = workflow.invoke(
-#         {"query": user_input},
-#         config=config
-#     )
-    
-#     print("Assistant:", result.get("response"))
