@@ -5,7 +5,6 @@
     sessionStorage.setItem("woodpetra_session_id", threadId);
   }
 
-  // Dynamic API URL: automatically switches between localhost and Azure domain
   const API_URL = `${window.location.origin}/api/chat`;
 
   const style = document.createElement("style");
@@ -94,15 +93,11 @@
       border-bottom-left-radius: 2px;
     }
 
-    /* Target links rendered inside chat bubble */
     .chat-msg a {
       color: #2563eb !important;
-      font-weight: bold !important;
+      font-weight: 700 !important;
       text-decoration: underline !important;
       cursor: pointer !important;
-    }
-    .chat-msg a:hover {
-      color: #1d4ed8 !important;
     }
 
     .horizontal-scroll-container {
@@ -121,7 +116,6 @@
       border-radius: 10px;
     }
 
-    /* COMPACT, PROPERLY SIZED CARDS */
     .product-card-horizontal {
       flex: 0 0 145px;
       width: 145px;
@@ -191,7 +185,7 @@
       font-size: 11.5px;
       font-weight: 700;
       color: #6b7280;
-      margin: 6px 0 2px 0;
+      margin: 10px 0 4px 0;
       text-transform: uppercase;
       letter-spacing: 0.5px;
       flex-shrink: 0;
@@ -260,7 +254,6 @@
   const chatInput = document.getElementById("chatInput");
   const chatSend = document.getElementById("chatSend");
 
-  // Robust Markdown & HTML converter
   window.renderMarkdownToHTML = function(text) {
     if (!text) return "";
 
@@ -270,7 +263,6 @@
     html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 
     // 2. Convert Markdown links [Text](URL) -> <a href="URL">Text</a>
-    // Updated Regex handles all URLs safely without breaking on query parameters
     html = html.replace(
       /\[([^\]]+)\]\(([^)]+)\)/g,
       '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
@@ -309,8 +301,7 @@
       const data = await res.json();
       typingElem.remove();
 
-      const responseText = data.response || "No response received.";
-      appendMessage(responseText, "bot");
+      appendMessage(data.response || "No response received.", "bot");
 
       if (data.displayed_products && data.displayed_products.length > 0) {
         renderGroupedCategories(data.displayed_products);
@@ -364,7 +355,10 @@
   function renderGroupedCategories(products) {
     const grouped = products.reduce((acc, item) => {
       let cat = item.category || "Featured Items";
-      if (!cat.endsWith("s")) cat += "s";
+      // FIX: Proper pluralization without creating "Shortss" or "Jeanss"
+      if (!cat.toLowerCase().endsWith("s")) {
+        cat += "s";
+      }
       if (!acc[cat]) acc[cat] = [];
       acc[cat].push(item);
       return acc;

@@ -62,7 +62,7 @@ async def chat_endpoint(request: ChatRequest):
         "similar_products": result.get("similar_products", [])
     }
 
-# 3. Static & Data Directory Mounts
+# 3. Static & Data Directory Mounts (Cleaned mount routes)
 if (FRONTEND_DIR / "css").exists():
     app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
 
