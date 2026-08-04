@@ -75,10 +75,14 @@ INTENT RULES:
    - Follow-up questions about an active item.
    - Examples: "what's the price?", "what colors are available?".
 
-4. "greeting":
+4. "checkout":
+   - Explicit requests to buy, purchase, pay, or get a payment link for an item.
+   - Examples: "I want to buy this", "send payment link for the navy hoodie", "how do I buy the white shirt?", "checkout".
+
+5. "greeting":
    - Casual banter: "hi", "hello", "thanks".
 
-5. "general":
+6. "general":
    - General store policies, shipping, or out-of-scope questions.
 
 --------------------------------------------------

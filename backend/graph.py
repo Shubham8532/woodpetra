@@ -1,3 +1,5 @@
+import os
+import razorpay
 from typing import List, Optional
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
@@ -22,6 +24,10 @@ from backend.prompt import (
     GENERAL_CHAT_PROMPT,
     INTENT_PROMPT,
     RESPONSE_PROMPT
+)
+
+razorpay_client = razorpay.Client(
+    auth=(os.environ.get("RAZORPAY_KEY_ID"), os.environ.get("RAZORPAY_KEY_SECRET"))
 )
 
 @traceable(name="Router", description="Route the user query to the appropriate workflow path.")
@@ -151,7 +157,7 @@ Current User:
     [
         (
             "system",
-            GENERAL_CHAT_PROMPT
+            GENERAL_CHAT_PROMPT,
             ),
         (
             "human",
@@ -161,7 +167,10 @@ Current User:
 )
 
     return {
-        "response": response.content
+        "response": response.content,
+        "products": state.get("products", []),
+        "displayed_products": [],
+        "similar_products": []
     }
 
 
@@ -234,10 +243,23 @@ def extract_intent(
     Previous conversation (Last 5 turns):
     {history_text}
 
+    FUZZY TYPO & PHONETIC CATEGORY MAPPING:
+    - Automatically infer and map typos, slang, or misspelled items to standard catalog categories:
+      * Phonetic/spelling typos like "hoofie", "hoofies", "hoddie", "hoddies", "sweatshirt" -> category: "Hoodie"
+      * "shrt", "shrts", "formal shirt", "casual shirt" -> category: "Shirt"
+      * "tshirt", "t-shirt", "tee", "tees" -> category: "T-Shirt"
+      * "pant", "pants", "trouser", "trousers", "slacks" -> category: "Trouser"
+      * "jean", "jeans", "denim" -> category: "Jeans"
+
+    OCCASION & STYLE INFERENCE:
+    - If the user asks for an occasion, vibe, or style (e.g. "office", "work", "gym", "party", "formal", "casual"), infer the primary catalog category that best matches that occasion and assign it to `category` (e.g., "Shirt" or "Trouser" for office/formal; "T-Shirt" or "Hoodie" for casual/gym).
+    - If a specific item is not mentioned, prioritize inferring the most logical category over leaving it null.
+    - Also capture the style term in `keyword` if applicable.
+
     CONTEXT RETENTION RULES:
     1. If the user asks general questions like "which colors are available", "what sizes do you have", or "show me more", DO NOT set `product_name` to a specific item unless explicitly named.
-    2. Maintain the `category` from previous turns ({active_category}).
-    3. Reset `price_max` to null on follow-up questions unless the user explicitly mentions budget again.
+    2. Maintain the `category` from previous turns ({active_category}) if no new category is mentioned.
+    3. Reset `price_max` to null on new queries unless a budget is explicitly requested.
 
     If the current shopping question refers to a previous product using words like "it", "this", "that", or "the product", infer the product_name from the previous conversation.
     """
@@ -359,7 +381,7 @@ def search_product(state: ShoppingState) -> ShoppingState:
         intent.price_min is not None,
         intent.price_max is not None,
         getattr(intent, 'brands', None) or getattr(intent, 'brand', None)
-    ])
+    ]) or getattr(intent, 'intent', None) in ["search", "browse", "recommend"]
 
     # If NO filter was extracted (e.g., user asked for "watches" or "belts" which aren't in our catalog),
     # stop immediately and return an empty list. This prevents pulling all 100 rows from the database.
@@ -487,21 +509,64 @@ def search_product(state: ShoppingState) -> ShoppingState:
         # Execute the general category query
         products = query.execute().data
 
-        # --- FALLBACK: IF NO ITEMS FOUND UNDER PRICE BUDGET ---
-        # Fetch the cheapest items in that category ordered by price ascending!
-        # --- UNIVERSAL FALLBACK: IF NO MATCHES FOUND IN DB ---
-        if not products:
-            # Case A: Budget exceeded or specific filter yielded 0 items -> Fetch cheapest in category/keyword
-            if intent.price_max is not None or intent.color or intent.size:
-                fallback_query = supabase.table("products").select("*").order("price", desc=False).limit(5)
-                if intent.category:
-                    fallback_query = fallback_query.eq("category", intent.category)
-                products = fallback_query.execute().data
 
-            # Case B: Unlisted keyword like "dresses" returned 0 rows -> Fetch 5 popular store items so UI cards still render!
+        #=====================================================================
+        # --- SMART FALLBACK FOR ZERO MATCHES (e.g., "office" yielded 0 rows) ---
+        if not products:
+            # Case A: Budget or attribute exceeded on a specific Category (e.g. Hoodies under 500)
+            # Fetch the cheapest items in THAT specific category!
+            if intent.category:
+                products = (
+                    supabase.table("products")
+                    .select("*")
+                    .eq("category", intent.category)
+                    .order("price", desc=False)
+                    .limit(5)
+                    .execute()
+                    .data
+                )
+            else:
+                # 1. Fetch distinct categories dynamically present in Supabase
+                all_cats = supabase.table("products").select("category").execute().data
+                distinct_categories = list(set(p.get("category") for p in all_cats if p.get("category")))
+                # products = supabase.table("products").select("*").limit(15).execute().data
+
+                # 2. Fetch top 5 items for every category in the DB
+                balanced_products = []
+                for cat in distinct_categories:
+                    cat_items = (
+                        supabase.table("products")
+                        .select("*")
+                        .eq("category", cat)
+                        .limit(2)
+                        .execute()
+                        .data
+                    )
+                    balanced_products.extend(cat_items)
+                products = balanced_products if balanced_products else supabase.table("products").select("*").limit(15).execute().data
+
+            # Case B: Style/Vibe Keyword like "office" returned 0 exact DB matches
+            # Fall back to fetching popular/formal items (Shirts / Trousers / Store items) so cards render!
+            # Fallback safety net if table categories are missing
             if not products:
-                print(f"No DB rows matched keyword '{intent.keyword}'. Fetching store featured fallback products...")
-                products = supabase.table("products").select("*").limit(5).execute().data
+                products = supabase.table("products").select("*").limit(15).execute().data
+       # =================================================================================
+
+        # # --- FALLBACK: IF NO ITEMS FOUND UNDER PRICE BUDGET ---
+        # # Fetch the cheapest items in that category ordered by price ascending!
+        # # --- UNIVERSAL FALLBACK: IF NO MATCHES FOUND IN DB ---
+        # if not products:
+        #     # Case A: Budget exceeded or specific filter yielded 0 items -> Fetch cheapest in category/keyword
+        #     if intent.price_max is not None or intent.color or intent.size:
+        #         fallback_query = supabase.table("products").select("*").order("price", desc=False).limit(5)
+        #         if intent.category:
+        #             fallback_query = fallback_query.eq("category", intent.category)
+        #         products = fallback_query.execute().data
+
+        #     # Case B: Unlisted keyword like "dresses" returned 0 rows -> Fetch 5 popular store items so UI cards still render!
+        #     if not products:
+        #         print(f"No DB rows matched keyword '{intent.keyword}'. Fetching store featured fallback products...")
+        #         products = supabase.table("products").select("*").limit(5).execute().data
 
     # RECOMMENDED / SIMILAR PRODUCTS QUERY
     # Fetch up to 4 other items in the same category (matching color/size if possible)
@@ -572,10 +637,35 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     else:
         intent_type = str(raw_intent)
 
+    # Convert IntentType enum to string if needed for razorpay
+    intent_str = str(intent_type.value if hasattr(intent_type, "value") else intent_type).lower()
+
     # Retrieve current products in memory
     products = state.get("products") or []
     similar_products = state.get("similar_products") or []
+    payment_url = state.get("payment_url")
+    selected_product = state.get("selected_product") or (products[0] if products else None)
 
+    # 1. SPECIAL CHECKOUT RESPONSE HANDLER
+    if intent_str == "checkout" and payment_url:
+        item_name = selected_product.get("name", "your selected item") if selected_product else "your selected item"
+        price = selected_product.get("price", "") if selected_product else ""
+
+        response_text = (
+            f"Great choice! Here is your secure checkout link for **{item_name}**"
+            f"{f' (₹{price})' if price else ''}:\n\n"
+            f"👉 [Click Here to Pay & Complete Order]({payment_url})"
+        )
+
+        return {
+            "response": response_text,
+            "displayed_products": [selected_product] if selected_product else products[:1],
+            "similar_products": [],
+            "products": products,
+            "payment_url": payment_url,
+            "selected_product": selected_product
+        }
+    # 2. STANDARD SHOPPING / CONTEXT RESPONSE HANDLER
     # 1. Decide what to display in UI cards for THIS specific turn
     # If the user is just saying hi/hello, don't show UI cards on screen, but keep products in memory!
     if intent_type in ["greeting", "general", "out_of_scope"]:
@@ -583,24 +673,39 @@ def generate_response(state: ShoppingState) -> ShoppingState:
         api_similar_products = []
     else:
         # 1. Full data payload for Frontend / Popups / API response
-        api_displayed_products = products[:5]
+        api_displayed_products = products
         api_similar_products = similar_products[:5]
+
+    # --- DYNAMIC MULTI-CATEGORY LLM CONTEXT ---
+    # Pick 1-2 representative items per category for the LLM prompt
+    category_map = {}
+    for p in products:
+        cat = p.get("category", "Featured")
+        if cat not in category_map:
+            category_map[cat] = []
+        if len(category_map[cat]) < 2:   # max 2 items per category for text context
+            category_map[cat].append(p)
+
 
     # 2. Ultra-lean payload ONLY for LLM prompt context (Saves ~70% tokens)
     prompt_products = []
-    for p in products[:5]:
+    available_categories_list = [str(cat) for cat in category_map.keys() if cat]
+    categories_str = ", ".join(available_categories_list) if available_categories_list else "our collection"
+    for cat, items in category_map.items():
+        for p in items:
         # Truncate description to max 80 chars for LLM prompt only
-        desc = p.get("description") or ""
-        short_desc = (desc[:180] + "...") if len(desc) > 80 else desc
+            desc = p.get("description") or ""
+            short_desc = (desc[:180] + "...") if len(desc) > 80 else desc
 
-        prompt_products.append({
-            "name": p.get("name"),
-            "price": f"₹{p.get('price')}",
-            "color": p.get("color"),
-            "size": p.get("size"),
-            "details": short_desc,
-            "url": p.get("product_url")
-        })
+            prompt_products.append({
+                "category": cat,
+                "name": p.get("name"),
+                "price": f"₹{p.get('price')}",
+                "color": p.get("color"),
+                "size": p.get("size"),
+                "details": short_desc,
+                "url": p.get("product_url")
+            })
 
     # # Clean & limit payload to max 5 items to preserve token budget
     # lean_products = [
@@ -625,10 +730,17 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     {state["query"]}
 
     Shopping Intent:
-    {intent_type}
+    {intent_str}
 
-    Active Products in Context:
+    Available Product Categories in Store:
+    {categories_str}
+
+    Sample Products in Context:
     {prompt_products if prompt_products else "None"}
+
+    RESPONSE INSTRUCTIONS:
+    - If the customer asks a broad question like "what products do you have" or "show collection", introduce and list the overall store categories ({categories_str}) rather than listing individual items from a single category.
+    - Keep the text concise, friendly, and helpful (2-3 sentences max).
     """
     # print(products[:2])
 
@@ -645,10 +757,144 @@ def generate_response(state: ShoppingState) -> ShoppingState:
         "response": response.content,
         "displayed_products": api_displayed_products, # Sent to FastAPI for primary cards
         "similar_products": api_similar_products,     # Sent to FastAPI for "You might also like"
-        "products": products,                          # Keeps primary products in LangGraph state
+        "products": products,  
+        "payment_url": payment_url,
+        "selected_product": selected_product                        # Keeps primary products in LangGraph state
     }
 
 
+def get_table_primary_key(table_name: str = "products") -> str:
+    """Inspects table schema directly via Supabase API to find the primary key column."""
+    try:
+        # Fetch OpenAPI schema definition from Supabase
+        schema_url = f"{supabase.supabase_url}/rest/v1/"
+        headers = {"apikey": supabase.supabase_key, "Authorization": f"Bearer {supabase.supabase_key}"}
+        
+        import requests
+        response = requests.get(schema_url, headers=headers)
+        if response.status_code == 200:
+            definitions = response.json().get("definitions", {})
+            table_def = definitions.get(table_name, {})
+            
+            # PostgREST schema lists primary keys in description or properties
+            properties = table_def.get("properties", {})
+            for col, details in properties.items():
+                if "Primary Key" in details.get("description", ""):
+                    return col
+    except Exception as e:
+        print(f"[Schema Fetch Warning]: {e}")
+        
+    return "sku"  # manual fallback if schema inspection fails
+
+def create_checkout_session(state: ShoppingState) -> ShoppingState:
+    """
+    DETERMINISTIC CHECKOUT NODE:
+    1. Selects target product from state.
+    2. Dynamically queries primary key via get_table_primary_key().
+    3. Verifies actual price and stock directly from Supabase (ground truth).
+    4. Calls Razorpay API to generate a real Payment Link.
+    """
+    products = state.get("products") or []
+
+    # Identify target product
+    target_product = state.get("selected_product")
+    if not target_product and products:
+        target_product = products[0]
+
+    if not target_product:
+        return {
+            "response": "Sorry, I couldn't find an item in our conversation to checkout. Which item would you like to buy?",
+            "payment_url": None,
+            "products": products
+        }
+
+    # 1. Dynamically retrieve primary key column name
+    pk_col = get_table_primary_key("products")
+    pk_val = target_product.get(pk_col)
+
+    # 2. Direct DB Ground-Truth Check using the dynamic primary key
+    try:
+        if pk_val:
+            db_res = supabase.table("products").select("*").eq(pk_col, pk_val).execute()
+        else:
+            p_name = target_product.get("name", "")
+            db_res = supabase.table("products").select("*").ilike("name", f"%{p_name}%").limit(1).execute()
+
+        db_product = db_res.data[0] if (db_res and db_res.data) else target_product
+    except Exception as db_err:
+        print(f"[Supabase Lookup Error]: {db_err}")
+        db_product = target_product
+
+    # Safe stock check (handles string values from DB)
+    raw_stock = db_product.get("stock", 0)
+    try:
+        stock_count = int(raw_stock) if raw_stock is not None else 0
+    except (ValueError, TypeError):
+        stock_count = 0
+
+    if not db_product or stock_count <= 0:
+        return {
+            "response": f"Sorry, **{target_product.get('name', 'this item')}** is currently out of stock.",
+            "payment_url": None,
+            "products": products
+        }
+
+    actual_price = float(db_product.get("price", 0))
+    p_name = db_product.get("name", "Product")
+    p_identifier = db_product.get(pk_col, pk_val or "ITEM")
+
+    # 3. Call Razorpay API to generate a real Payment Link
+    try:
+        payment_link = razorpay_client.payment_link.create({
+            "amount": int(actual_price * 100),  # Amount in paise
+            "currency": "INR",
+            "accept_partial": False,
+            "description": f"Purchase of {p_name} ({pk_col.upper()}: {p_identifier})",
+            "customer": {
+                "name": "Customer",
+                "email": "customer@example.com",
+                "contact": "+919876543210"
+            },
+            "notify": {"sms": False, "email": False},
+            "reminder_enable": False,
+            "notes": {pk_col: str(p_identifier)}
+        })
+
+        payment_url = payment_link.get("short_url")
+
+        return {
+            "payment_url": payment_url,
+            "selected_product": db_product,
+            "products": products
+        }
+
+    except Exception as e:
+        print(f"Razorpay API Error: {e}")
+        fallback_url = db_product.get("payment_link") or "#"
+        return {
+            "payment_url": fallback_url if fallback_url != "#" else None,
+            "selected_product": db_product,
+            "products": products
+        }
+
+def route_after_intent(state: ShoppingState) -> str:
+    """
+    Check if intent extracted by LLM is CHECKOUT.
+    If yes -> Branch directly to create_checkout_session.
+    If no  -> Continue normal flow to context_decision.
+    """
+    raw_intent = state.get("intent")
+    
+    # Extract intent string safely whether raw_intent is a Pydantic model, Enum, or raw string
+    if hasattr(raw_intent, "intent"):
+        intent_val = getattr(raw_intent.intent, "value", raw_intent.intent)
+    else:
+        intent_val = getattr(raw_intent, "value", raw_intent)
+
+    if str(intent_val).lower() == "checkout":
+        return "create_checkout_session"
+    
+    return "search_products"
 
 # Graph
 graph = StateGraph(ShoppingState)
@@ -658,6 +904,7 @@ graph.add_node("general_chat", general_chat)
 graph.add_node("extract_intent", extract_intent)
 graph.add_node("context_decision", context_decision)
 graph.add_node("search_products", search_product)
+graph.add_node("create_checkout_session", create_checkout_session)
 graph.add_node("generate_response", generate_response)
 
 graph.add_edge(START, "router")
@@ -670,9 +917,17 @@ graph.add_conditional_edges(
         RouteType.GENERAL: "general_chat",
     },
 )
+# Extract Intent Edge -> Checkout vs Standard Flow
+graph.add_conditional_edges(
+    "extract_intent",
+    route_after_intent,
+    {
+        "create_checkout_session": "create_checkout_session",
+        "search_products": "context_decision",
+    }
+)
 
-graph.add_edge("extract_intent", "context_decision")
-
+# Context Decision Edge
 graph.add_conditional_edges(
     "context_decision",
     decide_context,
@@ -681,7 +936,11 @@ graph.add_conditional_edges(
         ContextRoute.CONTEXT: "generate_response",
     },
 )
+
+
 graph.add_edge("search_products", "generate_response")
+graph.add_edge("create_checkout_session", "generate_response")
+graph.add_edge("general_chat", END)
 graph.add_edge("generate_response", END)
 
 

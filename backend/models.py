@@ -18,6 +18,7 @@ class IntentType(str, Enum):
     COMPARE = "compare"
     DETAILS = "details"
     RECOMMEND = "recommend"
+    CHECKOUT = "checkout"
 
 
 class SizeOption(str, Enum):
@@ -88,5 +89,7 @@ class ShoppingState(TypedDict):
     intent: ShoppingIntentModel | None = Field(None, description="Extracted shopping intent from the query")
     products: List[dict] | None = Field(None, description="List of products matching the shopping intent")
     similar_products: List[dict] | None = Field(None, description="List of similar products for recommendations")
+    selected_product: Optional[dict] = Field(None, description="The product selected by the user for details or checkout")
+    payment_url: Optional[str] = Field(None, description="Payment URL for checkout if applicable")
     response: str | None = Field(None, description="Response to the user based on the shopping intent and products")
     displayed_products: List[dict] | None = Field(None, description="List of products to be displayed to the user in popup")

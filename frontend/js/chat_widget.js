@@ -78,6 +78,7 @@
       line-height: 1.45;
       white-space: pre-wrap;
       flex-shrink: 0;
+      word-break: break-word;
     }
     .chat-msg.user {
       align-self: flex-end;
@@ -91,6 +92,17 @@
       color: #1f2937;
       border: 1px solid #e5e7eb;
       border-bottom-left-radius: 2px;
+    }
+
+    /* Target links rendered inside chat bubble */
+    .chat-msg a {
+      color: #2563eb !important;
+      font-weight: bold !important;
+      text-decoration: underline !important;
+      cursor: pointer !important;
+    }
+    .chat-msg a:hover {
+      color: #1d4ed8 !important;
     }
 
     .horizontal-scroll-container {
@@ -248,9 +260,24 @@
   const chatInput = document.getElementById("chatInput");
   const chatSend = document.getElementById("chatSend");
 
-  function cleanMarkdownLinks(text) {
-    return text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").trim();
-  }
+  // Robust Markdown & HTML converter
+  window.renderMarkdownToHTML = function(text) {
+    if (!text) return "";
+
+    let html = text;
+
+    // 1. Convert Markdown bold **text** -> <strong>text</strong>
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+    // 2. Convert Markdown links [Text](URL) -> <a href="URL">Text</a>
+    // Updated Regex handles all URLs safely without breaking on query parameters
+    html = html.replace(
+      /\[([^\]]+)\]\(([^)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+    );
+
+    return html;
+  };
 
   function scrollToElement(elem) {
     setTimeout(() => {
@@ -282,11 +309,11 @@
       const data = await res.json();
       typingElem.remove();
 
-      const cleanResponseText = cleanMarkdownLinks(data.response || "No response received.");
-      appendMessage(cleanResponseText, "bot");
+      const responseText = data.response || "No response received.";
+      appendMessage(responseText, "bot");
 
       if (data.displayed_products && data.displayed_products.length > 0) {
-        renderProductCarousel(data.displayed_products);
+        renderGroupedCategories(data.displayed_products);
       }
 
       if (data.similar_products && data.similar_products.length > 0) {
@@ -303,7 +330,13 @@
   function appendMessage(text, sender) {
     const msg = document.createElement("div");
     msg.className = `chat-msg ${sender}`;
-    msg.innerText = text;
+
+    if (sender === "bot") {
+      msg.innerHTML = window.renderMarkdownToHTML(text);
+    } else {
+      msg.innerText = text;
+    }
+
     chatBody.appendChild(msg);
     return msg;
   }
@@ -315,6 +348,7 @@
     
     const metaArr = [color, size, stock].filter(Boolean);
     const metaText = metaArr.join(" • ");
+    const targetUrl = p.payment_link || p.product_url || "#";
 
     return `
       <div class="product-card-horizontal">
@@ -322,18 +356,35 @@
         <div class="card-title">${p.name}</div>
         <div class="card-meta" title="${metaText}">${metaText}</div>
         <div class="card-price">₹${p.price}</div>
-        <a href="${p.product_url || "#"}" target="_blank" class="card-btn">View Item</a>
+        <a href="${targetUrl}" target="_blank" class="card-btn">View Item</a>
       </div>
     `;
   }
 
-  function renderProductCarousel(products) {
-    const container = document.createElement("div");
-    container.className = "horizontal-scroll-container";
-    products.forEach((p) => {
-      container.innerHTML += createCardHTML(p);
+  function renderGroupedCategories(products) {
+    const grouped = products.reduce((acc, item) => {
+      let cat = item.category || "Featured Items";
+      if (!cat.endsWith("s")) cat += "s";
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push(item);
+      return acc;
+    }, {});
+
+    Object.keys(grouped).forEach((categoryName) => {
+      const title = document.createElement("div");
+      title.className = "section-divider";
+      title.innerText = categoryName;
+
+      const container = document.createElement("div");
+      container.className = "horizontal-scroll-container";
+
+      grouped[categoryName].forEach((p) => {
+        container.innerHTML += createCardHTML(p);
+      });
+
+      chatBody.appendChild(title);
+      chatBody.appendChild(container);
     });
-    chatBody.appendChild(container);
   }
 
   function renderSimilarSection(similarProducts) {
