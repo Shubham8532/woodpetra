@@ -43,7 +43,8 @@ def router(state: ShoppingState):
         ]
     )
     return {
-        "route": result.route    }
+        "route": result.route    
+    }
 
 
 @traceable(name="Decide Route", description="Decide the next workflow path based on the router's output.")
@@ -381,7 +382,7 @@ def search_product(state: ShoppingState) -> ShoppingState:
         intent.price_min is not None,
         intent.price_max is not None,
         getattr(intent, 'brands', None) or getattr(intent, 'brand', None)
-    ]) or getattr(intent, 'intent', None) in ["search", "browse", "recommend"]
+    ]) or getattr(intent, 'intent', None) in ["search", "browse", "recommend", "general"]
 
     # If NO filter was extracted (e.g., user asked for "watches" or "belts" which aren't in our catalog),
     # stop immediately and return an empty list. This prevents pulling all 100 rows from the database.
@@ -789,17 +790,37 @@ def get_table_primary_key(table_name: str = "products") -> str:
 def create_checkout_session(state: ShoppingState) -> ShoppingState:
     """
     DETERMINISTIC CHECKOUT NODE:
-    1. Selects target product from state.
+    1. Checks extracted intent for newly requested product_name.
     2. Dynamically queries primary key via get_table_primary_key().
     3. Verifies actual price and stock directly from Supabase (ground truth).
     4. Calls Razorpay API to generate a real Payment Link.
     """
     products = state.get("products") or []
+    intent = state.get("intent")
 
-    # Identify target product
-    target_product = state.get("selected_product")
-    if not target_product and products:
-        target_product = products[0]
+    # Extract requested product name from the newly extracted intent
+    req_name = getattr(intent, "product_name", None) if intent else None
+    target_product = None
+
+    # 1. First priority: Search DB directly if a specific product_name was extracted in checkout intent
+    if req_name:
+        try:
+            db_res = supabase.table("products").select("*").ilike("name", f"%{req_name}%").limit(1).execute()
+            if db_res and db_res.data:
+                target_product = db_res.data[0]
+        except Exception as e:
+            print(f"[Checkout Intent Name Search Error]: {e}")
+
+    # 2. Second priority: Check if any item in current products memory matches req_name
+    if not target_product and req_name and products:
+        for p in products:
+            if req_name.lower() in p.get("name", "").lower():
+                target_product = p
+                break
+
+    # 3. Fallback: Use state's existing selected_product or first product in memory
+    if not target_product:
+        target_product = state.get("selected_product") or (products[0] if products else None)
 
     if not target_product:
         return {
