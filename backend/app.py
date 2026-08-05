@@ -85,7 +85,7 @@ async def verify_webhook(request: Request):
         return PlainTextResponse(content=challenge, status_code=200)
     return PlainTextResponse(content="Verification failed", status_code=403)
 
-# Message Listener Endpoint (POST - Async & Interactive UI Optimized)
+# Message Listener Endpoint (POST - Async & Rich Interactive UI Optimized)
 @app.post("/webhook/whatsapp")
 async def whatsapp_webhook(request: Request):
     data = await request.json()
@@ -144,7 +144,7 @@ async def whatsapp_webhook(request: Request):
                     await client.post(url, json=greet_payload, headers=headers)
                 return {"status": "ok"}
 
-            # Execute LangGraph workflow for complex product searches
+            # Execute LangGraph workflow for complex queries
             config = {"configurable": {"thread_id": f"wa_{from_number}"}}
             result = workflow.invoke({"query": user_text}, config=config)
             
@@ -152,7 +152,7 @@ async def whatsapp_webhook(request: Request):
             displayed_products = result.get("displayed_products", [])
 
             async with httpx.AsyncClient(timeout=10.0) as client:
-                # 1. Send text response
+                # 1. Send main text response
                 text_payload = {
                     "messaging_product": "whatsapp",
                     "recipient_type": "individual",
@@ -162,18 +162,34 @@ async def whatsapp_webhook(request: Request):
                 }
                 await client.post(url, json=text_payload, headers=headers)
 
-                # 2. Send Interactive List Drawer for Products (Fast & Clean UI)
+                # 2. Send Interactive List Drawer with Rich Attributes (Color, Size, Price)
                 if displayed_products:
                     rows = []
                     for idx, prod in enumerate(displayed_products[:10]):
                         prod_id = str(prod.get("id", idx))
-                        title = (prod.get("title") or prod.get("name") or f"Item {idx+1}")[:24]
-                        price = f"₹{prod.get('price', '')}" if prod.get('price') else "In Stock"
+                        title = (prod.get("name") or prod.get("title") or f"Item {idx+1}")[:24]
                         
+                        # Extract attributes dynamically
+                        price_val = prod.get("price")
+                        price = f"₹{price_val}" if price_val is not None and str(price_val).strip() != "" else ""
+                        color = prod.get("color") or prod.get("colour") or ""
+                        size = prod.get("size") or ""
+
+                        # Build clean description string within Meta's 72-char limit
+                        desc_parts = []
+                        if color:
+                            desc_parts.append(str(color).title())
+                        if size:
+                            desc_parts.append(f"Size: {size}")
+                        if price:
+                            desc_parts.append(price)
+
+                        row_desc = " | ".join(desc_parts) if desc_parts else "In Stock"
+
                         rows.append({
                             "id": f"prod_{prod_id}",
                             "title": title,
-                            "description": price[:72]
+                            "description": row_desc[:72]
                         })
 
                     list_payload = {
@@ -184,11 +200,11 @@ async def whatsapp_webhook(request: Request):
                         "interactive": {
                             "type": "list",
                             "header": {"type": "text", "text": "Matching Items"},
-                            "body": {"text": "Select an item to view details on our store:"},
+                            "body": {"text": "Tap below to view item details:"},
                             "footer": {"text": "Shubham Fashion Assistant"},
                             "action": {
                                 "button": "View Products",
-                                "sections": [{"title": "Results Found", "rows": rows}]
+                                "sections": [{"title": "Search Results", "rows": rows}]
                             }
                         }
                     }
