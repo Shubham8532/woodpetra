@@ -145,7 +145,7 @@ async def whatsapp_webhook(request: Request):
                 # Prepare image payload tasks for concurrent execution
                 if displayed_products:
                     image_tasks = []
-                    for prod in displayed_products[:3]:
+                    for prod in displayed_products[:5]:
                         img_url = prod.get("image_url") or prod.get("image") or prod.get("img")
                         title = prod.get("title") or prod.get("name") or "Product"
                         price = prod.get("price", "")
