@@ -1,11 +1,13 @@
 import os
+import csv
+import io
 import asyncio
 import httpx
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 from backend.graph import workflow
 
@@ -51,6 +53,55 @@ async def read_root():
 def health_check():
     return {"status": "ok", "message": "Shubham Fashion Assistant API is running"}
 
+# --- META COMMERCE CATALOG CSV ENDPOINT ---
+@app.get("/api/catalog-feed.csv")
+async def get_meta_catalog_feed(secret: str = ""):
+    if secret != VERIFY_TOKEN:
+        return Response(content="Unauthorized", status_code=401)
+
+    try:
+        # Fetch initial state or graph memory to pull all catalog products
+        # (Calls graph retriever to get complete dataset directly from Supabase DB)
+        from backend.db import get_all_products
+        products = get_all_products()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Meta Commerce Required CSV Headers
+        writer.writerow(["id", "title", "description", "availability", "condition", "price", "link", "image_link", "brand"])
+
+        for prod in products:
+            prod_id = str(prod.get("id", ""))
+            title = prod.get("name") or prod.get("title", "")
+            desc = prod.get("description", "Quality apparel product")
+            price = f"{prod.get('price', 0)} INR"
+            image_url = prod.get("image_url", "https://placehold.co/600x600")
+            product_link = f"https://woodpetra-assistant-bcdmawbgh3g6bvcu.southeastasia-01.azurewebsites.net/?product={prod_id}"
+
+            writer.writerow([
+                prod_id,
+                title,
+                desc,
+                "in stock",
+                "new",
+                price,
+                product_link,
+                image_url,
+                "Shubham Fashion"
+            ])
+
+        output.seek(0)
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode('utf-8')),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=catalog.csv"}
+        )
+
+    except Exception as e:
+        print(f"[Catalog Feed Error]: {e}")
+        return Response(content=f"Error generating feed: {str(e)}", status_code=500)
+
 # 2. Chat API Endpoint
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
@@ -82,7 +133,6 @@ async def verify_webhook(request: Request):
     print(f"\n[Meta Verification] Mode: {mode} | Token: {token} | Challenge: {challenge}")
 
     if mode == "subscribe" and token == VERIFY_TOKEN:
-        # Return plain text challenge as required by Meta Cloud API
         return PlainTextResponse(content=challenge, status_code=200)
     return PlainTextResponse(content="Verification failed", status_code=403)
 
@@ -119,23 +169,42 @@ async def whatsapp_webhook(request: Request):
 
             print(f"\n[WhatsApp Incoming] From: {from_number} | Message: {user_text}")
 
-            # Execute LangGraph workflow
-            config = {"configurable": {"thread_id": f"wa_{from_number}"}}
-            result = workflow.invoke({"query": user_text}, config=config)
-            
-            bot_reply = result.get("response", "Sorry, I couldn't process that.")
-            displayed_products = result.get("displayed_products", [])
-
-            # Meta Cloud API Details
             url = f"https://graph.facebook.com/v26.0/{PHONE_NUMBER_ID}/messages"
             headers = {
                 "Authorization": f"Bearer {ACCESS_TOKEN}",
                 "Content-Type": "application/json"
             }
 
+            # FAST-PATH: Fuzzy Intent Greeting Check (Bypasses 6s LLM Router Overhead)
+            greetings = [
+                "hi", "hello", "hey", "hii", "helo", "hlo", "hola", 
+                "greetings", "good morning", "goodafternoon", 
+                "good evening", "goodnight", "gud morning", "gud mrng"
+            ]
+
+            clean_text = "".join(ch for ch in user_text.lower().strip() if ch.isalnum() or ch == " ")
+            is_simple_greeting = any(clean_text.startswith(g) for g in greetings)
+
+            if is_simple_greeting and len(clean_text) <= 20:
+                greet_payload = {
+                    "messaging_product": "whatsapp",
+                    "recipient_type": "individual",
+                    "to": from_number,
+                    "type": "text",
+                    "text": {"body": "Hello! Welcome to Shubham Fashion. What apparel or style are you looking for today?"}
+                }
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    await client.post(url, json=greet_payload, headers=headers)
+                return {"status": "ok"}
+            # Execute LangGraph workflow for complex queries
+            config = {"configurable": {"thread_id": f"wa_{from_number}"}}
+            result = workflow.invoke({"query": user_text}, config=config)
+            
+            bot_reply = result.get("response", "Sorry, I couldn't process that.")
+            displayed_products = result.get("displayed_products", [])
+
             # Non-blocking async client for Meta Cloud API calls
             async with httpx.AsyncClient(timeout=10.0) as client:
-                # Send text response first
                 text_payload = {
                     "messaging_product": "whatsapp",
                     "recipient_type": "individual",
@@ -145,7 +214,7 @@ async def whatsapp_webhook(request: Request):
                 }
                 await client.post(url, json=text_payload, headers=headers)
 
-                # Prepare image payload tasks for concurrent execution (Up to 5)
+                # Prepare image payload tasks for concurrent execution
                 if displayed_products:
                     image_tasks = []
                     for prod in displayed_products[:5]:
@@ -171,10 +240,8 @@ async def whatsapp_webhook(request: Request):
                                     "caption": caption_text
                                 }
                             }
-                            # Add POST request coroutine to task pool
                             image_tasks.append(client.post(url, json=img_payload, headers=headers))
 
-                    # Dispatch all product image requests in parallel
                     if image_tasks:
                         responses = await asyncio.gather(*image_tasks, return_exceptions=True)
                         for resp in responses:
@@ -202,7 +269,6 @@ if FRONTEND_DIR.exists():
 # 5. HTML Page Handler
 @app.get("/{page_name}")
 async def read_page(page_name: str):
-    # Exclude system, API, and webhook routes explicitly from template rendering
     if page_name.startswith(("data", "static", "css", "js", "api", "webhook", "robots")):
         return Response(status_code=404)
 
