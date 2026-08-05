@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 from backend.graph import workflow
 
@@ -79,9 +79,12 @@ async def verify_webhook(request: Request):
     token = params.get("hub.verify_token")
     challenge = params.get("hub.challenge")
 
+    print(f"\n[Meta Verification] Mode: {mode} | Token: {token} | Challenge: {challenge}")
+
     if mode == "subscribe" and token == VERIFY_TOKEN:
-        return Response(content=challenge, media_type="text/plain")
-    return Response(content="Verification failed", status_code=403)
+        # Return plain text challenge as required by Meta Cloud API
+        return PlainTextResponse(content=challenge, status_code=200)
+    return PlainTextResponse(content="Verification failed", status_code=403)
 
 # Message Listener Endpoint (POST - Async Optimized)
 @app.post("/webhook/whatsapp")
@@ -142,7 +145,7 @@ async def whatsapp_webhook(request: Request):
                 }
                 await client.post(url, json=text_payload, headers=headers)
 
-                # Prepare image payload tasks for concurrent execution
+                # Prepare image payload tasks for concurrent execution (Up to 5)
                 if displayed_products:
                     image_tasks = []
                     for prod in displayed_products[:5]:
@@ -199,8 +202,9 @@ if FRONTEND_DIR.exists():
 # 5. HTML Page Handler
 @app.get("/{page_name}")
 async def read_page(page_name: str):
-    if page_name.startswith(("data", "static", "css", "js", "api", "webhook")):
-        return {"status": "error", "message": "Not found"}
+    # Exclude system, API, and webhook routes explicitly from template rendering
+    if page_name.startswith(("data", "static", "css", "js", "api", "webhook", "robots")):
+        return Response(status_code=404)
 
     if not page_name.endswith(".html"):
         page_name = f"{page_name}.html"
