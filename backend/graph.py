@@ -36,8 +36,8 @@ def invoke_with_fallback(messages, schema=None):
     Supports both text generation and structured Pydantic schema extraction.
     """
     # Bind schema if passed, otherwise use raw LLM
-    model_70b = llm_70b.with_structured_output(schema) if schema else llm_70b
-    model_120b = llm_120b.with_structured_output(schema) if schema else llm_120b
+    model_70b = llm_70B.with_structured_output(schema) if schema else llm_70B
+    model_120b = llm_120B.with_structured_output(schema) if schema else llm_120B
 
     try:
         return model_70b.invoke(messages)
@@ -577,7 +577,7 @@ def search_product(state: ShoppingState) -> ShoppingState:
                     .select("*")
                     .eq("category", intent.category)
                     .order("price", desc=False)
-                    .limit(5)
+                    .limit(10)
                     .execute()
                     .data
                 )
