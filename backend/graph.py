@@ -507,6 +507,8 @@ def search_product(state: ShoppingState) -> ShoppingState:
         if intent.price_max is not None:
             query = query.lte("price", intent.price_max)
 
+
+
         # Execute the general category query
         products = query.execute().data
 
@@ -696,7 +698,7 @@ def generate_response(state: ShoppingState) -> ShoppingState:
         for p in items:
         # Truncate description to max 80 chars for LLM prompt only
             desc = p.get("description") or ""
-            short_desc = (desc[:180] + "...") if len(desc) > 80 else desc
+            short_desc = (desc[:80] + "...") if len(desc) > 80 else desc
 
             prompt_products.append({
                 "category": cat,
@@ -726,6 +728,13 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     #     for p in products[:5]
     # ]
 
+    # Extract full inventory metadata before truncating prompt_products
+    distinct_colors = sorted(list(set(p.get("color").title() for p in products if p.get("color"))))
+    colors_summary = ", ".join(distinct_colors) if distinct_colors else "Various colors available"
+
+    distinct_sizes = sorted(list(set(str(p.get("size")) for p in products if p.get("size"))))
+    sizes_summary = ", ".join(distinct_sizes) if distinct_sizes else "Various sizes available"
+
     prompt = f"""
     Customer Query:
     {state["query"]}
@@ -736,11 +745,17 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     Available Product Categories in Store:
     {categories_str}
 
+    All Available Colors for These Items in Stock:
+    {colors_summary}
+
+    All Available Sizes in Stock:
+    {sizes_summary}
+
     Sample Products in Context:
     {prompt_products if prompt_products else "None"}
 
     RESPONSE INSTRUCTIONS:
-    - If the customer asks a broad question like "what products do you have" or "show collection", introduce and list the overall store categories ({categories_str}) rather than listing individual items from a single category.
+    - If the customer asks about available colors or sizes, answer using the 'All Available Colors' and 'All Available Sizes' lists above rather than relying only on the sample products.
     - Keep the text concise, friendly, and helpful (2-3 sentences max).
     """
     # print(products[:2])
