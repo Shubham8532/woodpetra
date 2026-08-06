@@ -182,7 +182,7 @@ def general_chat(state: ShoppingState, config: RunnableConfig):
 
 
 @traceable(name="Build Conversation", description="Convert LangGraph checkpoints into a clean conversation history.")
-def build_conversation(history, max_turns=5):
+def build_conversation(history, max_turns=3):
     """
     Converts recent LangGraph checkpoints into a clean conversation history
     and extracts the active category from previous turns.
@@ -705,7 +705,7 @@ def generate_response(state: ShoppingState) -> ShoppingState:
 
     # --- ALL PRODUCTS INCLUDED (2-ITEM LIMIT REMOVED) ---
     prompt_products = []
-    for p in products[:8]:   # Capped at 8 ...
+    for p in products[:5]:   # Capped at 5 ...
         desc = p.get("description") or ""
         short_desc = (desc[:60] + "...") if len(desc) > 60 else desc
 
