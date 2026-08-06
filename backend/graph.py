@@ -575,6 +575,13 @@ def search_product(state: ShoppingState) -> ShoppingState:
     # Fetch up to 4 other items in the same category (matching color/size if possible)
     # excluding the primary product SKUs so the UI carousel has relevant items to show.
 
+    # DYNAMIC SORTING HANDLER (Processes LLM intent.sort field)
+    sort_val = str(getattr(intent, 'sort', '') or '').lower()
+    if ("price_asc" in sort_val or "asc" in sort_val) and products:
+        products.sort(key=lambda x: float(x.get("price", float("inf"))))
+    elif ("price_desc" in sort_val or "desc" in sort_val) and products:
+        products.sort(key=lambda x: float(x.get("price", 0)), reverse=True)
+
     similar_products = []
     category_to_recommend = intent.category
 
@@ -647,6 +654,14 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     products = state.get("products") or []
     similar_products = state.get("similar_products") or []
     payment_url = state.get("payment_url")
+    
+    # Dynamic Array Sorting Safeguard
+    sort_val = str(getattr(raw_intent, 'sort', '') or '').lower()
+    if ("price_asc" in sort_val or "asc" in sort_val) and products:
+        products = sorted(products, key=lambda x: float(x.get("price", float("inf"))))
+    elif ("price_desc" in sort_val or "desc" in sort_val) and products:
+        products = sorted(products, key=lambda x: float(x.get("price", 0)), reverse=True)
+
     selected_product = state.get("selected_product") or (products[0] if products else None)
 
     # 1. SPECIAL CHECKOUT RESPONSE HANDLER
@@ -679,56 +694,26 @@ def generate_response(state: ShoppingState) -> ShoppingState:
         api_displayed_products = products
         api_similar_products = similar_products[:5]
 
-    # --- DYNAMIC MULTI-CATEGORY LLM CONTEXT ---
-    # Pick 1-2 representative items per category for the LLM prompt
-    category_map = {}
-    for p in products:
-        cat = p.get("category", "Featured")
-        if cat not in category_map:
-            category_map[cat] = []
-        if len(category_map[cat]) < 2:   # max 2 items per category for text context
-            category_map[cat].append(p)
-
-
-    # 2. Ultra-lean payload ONLY for LLM prompt context (Saves ~70% tokens)
+    # --- ALL PRODUCTS INCLUDED (2-ITEM LIMIT REMOVED) ---
     prompt_products = []
-    available_categories_list = [str(cat) for cat in category_map.keys() if cat]
-    categories_str = ", ".join(available_categories_list) if available_categories_list else "our collection"
-    for cat, items in category_map.items():
-        for p in items:
-        # Truncate description to max 80 chars for LLM prompt only
-            desc = p.get("description") or ""
-            short_desc = (desc[:80] + "...") if len(desc) > 80 else desc
+    for p in products:
+        desc = p.get("description") or ""
+        short_desc = (desc[:70] + "...") if len(desc) > 70 else desc
 
-            prompt_products.append({
-                "category": cat,
-                "name": p.get("name"),
-                "price": f"₹{p.get('price')}",
-                "color": p.get("color"),
-                "size": p.get("size"),
-                "details": short_desc,
-                "url": p.get("product_url")
-            })
+        prompt_products.append({
+            "category": p.get("category"),
+            "name": p.get("name"),
+            "price": f"₹{p.get('price')}",
+            "color": p.get("color"),
+            "size": p.get("size"),
+            "details": short_desc,
+            "url": p.get("product_url")
+        })
 
-    # # Clean & limit payload to max 5 items to preserve token budget
-    # lean_products = [
-    #     {
-    #         "name": p.get("name"),
-    #         "price": p.get("price"),
-    #         "category": p.get("category"),
-    #         "color": p.get("color"),
-    #         "size": p.get("size"),
-    #         "description": p.get("description"),
-    #         "image_url": p.get("image_url"),
-    #         "product_url": p.get("product_url"),
-    #         "brand": p.get("brand"),
-    #         "stock": p.get("stock"),
-    #         "payment_link": p.get("payment_link")
-    #     }
-    #     for p in products[:5]
-    # ]
+    distinct_categories = sorted(list(set(str(p.get("category")) for p in products if p.get("category"))))
+    categories_str = ", ".join(distinct_categories) if distinct_categories else "our collection"
 
-    # Extract full inventory metadata before truncating prompt_products
+    # Extract full inventory metadata before building prompt
     distinct_colors = sorted(list(set(p.get("color").title() for p in products if p.get("color"))))
     colors_summary = ", ".join(distinct_colors) if distinct_colors else "Various colors available"
 
@@ -751,11 +736,14 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     All Available Sizes in Stock:
     {sizes_summary}
 
-    Sample Products in Context:
+    Products in Context:
     {prompt_products if prompt_products else "None"}
 
     RESPONSE INSTRUCTIONS:
-    - If the customer asks about available colors or sizes, answer using the 'All Available Colors' and 'All Available Sizes' lists above rather than relying only on the sample products.
+    - Respond directly to the customer's query using the context provided above.
+    - If the customer asks strictly about COLORS, state ONLY the available colors ({colors_summary}). DO NOT list sizes unless asked.
+    - If the customer asks strictly about SIZES, state ONLY the available sizes ({sizes_summary}). DO NOT list colors unless asked.
+    - If the customer asks for the cheapest or lowest priced item, quote the VERY FIRST product from 'Products in Context' (which is already sorted).
     - Keep the text concise, friendly, and helpful (2-3 sentences max).
     """
     # print(products[:2])
