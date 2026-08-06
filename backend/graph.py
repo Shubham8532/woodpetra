@@ -371,6 +371,7 @@ def decide_context(state: ShoppingState):
 
 
 @traceable(name="Search Product", description="Query Supabase using the extracted shopping intent with a 2-Tier strategy and smart fallbacks.")
+@traceable(name="Search Product", description="Query Supabase using the extracted shopping intent with a 2-Tier strategy and smart fallbacks.")
 def search_product(state: ShoppingState) -> ShoppingState:
     """
     Query Supabase using the extracted shopping intent.
@@ -463,7 +464,8 @@ def search_product(state: ShoppingState) -> ShoppingState:
             if intent.category:
                 alt_query = alt_query.eq("category", intent.category)
             elif intent.keyword:
-                alt_query = alt_query.or_(f"name.ilike.%{intent.keyword}%,description.ilike.%{intent.keyword}%")
+                clean_kw = intent.keyword.lower().replace("tshirts", "t-shirt").replace("tshirt", "t-shirt").rstrip('s')
+                alt_query = alt_query.or_(f"name.ilike.%{clean_kw}%,description.ilike.%{clean_kw}%,category.ilike.%{clean_kw}%")
 
             # Match requested color if provided
             if intent.color:
@@ -495,11 +497,16 @@ def search_product(state: ShoppingState) -> ShoppingState:
         # Base query: select all columns from products table
         query = supabase.table("products").select("*")
 
-        #Filter by Category (exact match, e.g. category = 'Hoodie')
+        # Prepare normalized keyword search (handles plurals like "tshirts" -> "t-shirt")
+        clean_kw = ""
+        if intent.keyword:
+            clean_kw = intent.keyword.lower().replace("tshirts", "t-shirt").replace("tshirt", "t-shirt").rstrip('s')
+
+        # Filter by Category (exact match, e.g. category = 'Hoodie')
         if intent.category:
             query = query.eq("category", intent.category)
         elif intent.keyword:
-            query = query.or_(f"name.ilike.%{intent.keyword}%,description.ilike.%{intent.keyword}%")
+            query = query.or_(f"name.ilike.%{clean_kw}%,description.ilike.%{clean_kw}%,category.ilike.%{clean_kw}%")
 
         # Filter by Color (case-insensitive match, e.g. color = 'Black')
         if intent.color:
@@ -540,6 +547,19 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 .data
             )
 
+        # --- COLOR SAFETY NET FALLBACK FOR ZERO MATCHES ---
+        # If category/keyword search with specific color yielded 0 items, fetch products matching requested COLOR alone!
+        # Prevents leaking into the multi-category store balancer.
+        if not products and intent.color:
+            products = (
+                supabase.table("products")
+                .select("*")
+                .ilike("color", intent.color.capitalize())
+                .order("price", desc=False)
+                .execute()
+                .data
+            )
+
         #=====================================================================
         # --- SMART FALLBACK FOR ZERO MATCHES (e.g., "office" yielded 0 rows) ---
         if not products:
@@ -550,6 +570,17 @@ def search_product(state: ShoppingState) -> ShoppingState:
                     supabase.table("products")
                     .select("*")
                     .eq("category", intent.category)
+                    .order("price", desc=False)
+                    .limit(10)
+                    .execute()
+                    .data
+                )
+            elif intent.keyword:
+                # Fetch items matching keyword/category search terms before dumping store mix
+                products = (
+                    supabase.table("products")
+                    .select("*")
+                    .or_(f"name.ilike.%{clean_kw}%,category.ilike.%{clean_kw}%")
                     .order("price", desc=False)
                     .limit(10)
                     .execute()
