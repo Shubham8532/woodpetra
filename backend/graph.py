@@ -663,11 +663,12 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     similar_products = state.get("similar_products") or []
     payment_url = state.get("payment_url")
     
-    # Dynamic Array Sorting Safeguard
+    # Dynamic Array Sorting Safeguard (Applies to ALL products before slicing)
     sort_val = str(getattr(raw_intent, 'sort', '') or '').lower()
-    if ("price_asc" in sort_val or "asc" in sort_val) and products:
+    raw_query = state.get("query", "").lower()
+    if ("price_asc" in sort_val or "asc" in sort_val or "cheap" in raw_query or "lowest" in raw_query) and products:
         products = sorted(products, key=lambda x: float(x.get("price", float("inf"))))
-    elif ("price_desc" in sort_val or "desc" in sort_val) and products:
+    elif ("price_desc" in sort_val or "desc" in sort_val or "expensive" in raw_query or "highest" in raw_query) and products:
         products = sorted(products, key=lambda x: float(x.get("price", 0)), reverse=True)
 
     selected_product = state.get("selected_product") or (products[0] if products else None)
@@ -704,9 +705,9 @@ def generate_response(state: ShoppingState) -> ShoppingState:
 
     # --- ALL PRODUCTS INCLUDED (2-ITEM LIMIT REMOVED) ---
     prompt_products = []
-    for p in products:
+    for p in products[:8]:   # Capped at 8 ...
         desc = p.get("description") or ""
-        short_desc = (desc[:70] + "...") if len(desc) > 70 else desc
+        short_desc = (desc[:60] + "...") if len(desc) > 60 else desc
 
         prompt_products.append({
             "category": p.get("category"),
@@ -718,10 +719,10 @@ def generate_response(state: ShoppingState) -> ShoppingState:
             "url": p.get("product_url")
         })
 
+    # Global Metadata Summaries (Loops across ALL products in memory for 100% attribute accuracy)
     distinct_categories = sorted(list(set(str(p.get("category")) for p in products if p.get("category"))))
     categories_str = ", ".join(distinct_categories) if distinct_categories else "our collection"
 
-    # Extract full inventory metadata before building prompt
     distinct_colors = sorted(list(set(p.get("color").title() for p in products if p.get("color"))))
     colors_summary = ", ".join(distinct_colors) if distinct_colors else "Various colors available"
 
@@ -744,20 +745,17 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     All Available Sizes in Stock:
     {sizes_summary}
 
-    Products in Context:
+    Top Products in Context (Pre-Sorted):
     {prompt_products if prompt_products else "None"}
 
     RESPONSE INSTRUCTIONS:
     - Respond directly to the customer's query using the context provided above.
     - If the customer asks strictly about COLORS, state ONLY the available colors ({colors_summary}). DO NOT list sizes unless asked.
     - If the customer asks strictly about SIZES, state ONLY the available sizes ({sizes_summary}). DO NOT list colors unless asked.
-    - If the customer asks for the cheapest or lowest priced item, quote the VERY FIRST product from 'Products in Context' (which is already sorted).
+    - If the customer asks for the cheapest or lowest priced item, quote the VERY FIRST product from 'Top Products in Context' (index 0).
     - Keep the text concise, friendly, and helpful (2-3 sentences max).
     """
-    # print(products[:2])
 
-    
-    # response = llm_fast.invoke(
     response = llm_strong.invoke(
         [
             ("system", RESPONSE_PROMPT),
