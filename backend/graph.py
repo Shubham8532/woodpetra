@@ -371,7 +371,6 @@ def decide_context(state: ShoppingState):
 
 
 @traceable(name="Search Product", description="Query Supabase using the extracted shopping intent with a 2-Tier strategy and smart fallbacks.")
-@traceable(name="Search Product", description="Query Supabase using the extracted shopping intent with a 2-Tier strategy and smart fallbacks.")
 def search_product(state: ShoppingState) -> ShoppingState:
     """
     Query Supabase using the extracted shopping intent.
@@ -379,10 +378,29 @@ def search_product(state: ShoppingState) -> ShoppingState:
     with smart fallbacks, plus a recommendation query for similar products.
     """
     
-    
     # Extract the structured intent object from LangGraph state
     intent = state['intent']
     raw_query = state.get('query', '').lower()
+
+    # STEP 0: KEYWORD TO CATEGORY NORMALIZATION
+    # Converts plural/synonym keywords ("tshirts", "tees", "pants") to exact DB categories if category is missing
+    if not intent.category and intent.keyword:
+        kw_clean = intent.keyword.lower().replace("tshirts", "t-shirt").replace("tshirt", "t-shirt").rstrip('s')
+        cat_map = {
+            "t-shirt": "T-Shirt", "tee": "T-Shirt",
+            "shirt": "Shirt",
+            "hoodie": "Hoodie", "sweatshirt": "Hoodie",
+            "jean": "Jeans", "denim": "Jeans",
+            "jogger": "Joggers", "pant": "Joggers", "trouser": "Joggers",
+            "short": "Shorts",
+            "jacket": "Jacket",
+            "shoe": "Shoes", "sneaker": "Shoes",
+            "cap": "Cap", "hat": "Cap"
+        }
+        for k, v in cat_map.items():
+            if k in kw_clean:
+                intent.category = v
+                break
 
     # STEP 1: SAFETY CHECK
     # Check if ANY usable search filter was extracted from the user's query.
@@ -397,8 +415,7 @@ def search_product(state: ShoppingState) -> ShoppingState:
         getattr(intent, 'brands', None) or getattr(intent, 'brand', None)
     ]) or getattr(intent, 'intent', None) in ["search", "browse", "recommend", "general"]
 
-    # If NO filter was extracted (e.g., user asked for "watches" or "belts" which aren't in our catalog),
-    # stop immediately and return an empty list. This prevents pulling all 100 rows from the database.
+    # If NO filter was extracted, stop immediately to prevent pulling all rows from DB
     if not has_filter:
         print("Extracted Intent:", intent)
         print("Product Name:", intent.product_name)
@@ -414,19 +431,15 @@ def search_product(state: ShoppingState) -> ShoppingState:
     # TIER 1: THE USER ASKED FOR A SPECIFIC PRODUCT BY NAME
     # Example: "Do you have CloudWarm Hoodie in Navy size XL?"
     if intent.product_name:
-        # Start building a strict query for this specific product name
-        # .ilike("name", "%...") performs a case-insensitive fuzzy match on the product name
         strict_query = (
             supabase.table("products")
             .select("*")
             .ilike("name", f"%{intent.product_name}%")
         )
 
-        # If the user also specified a color, add a strict color filter
         if intent.color:
             strict_query = strict_query.ilike("color", intent.color.capitalize())  
 
-        # If the user also specified a size, extract the raw string value (e.g. 'M') and add a size filter
         if intent.size:
             size_val = (
                 intent.size.value
@@ -435,13 +448,9 @@ def search_product(state: ShoppingState) -> ShoppingState:
             )
             strict_query = strict_query.eq("size", size_val)
 
-        # Execute the strict query against Supabase
         products = strict_query.execute().data
 
-
         # --- FALLBACK 1: PRODUCT EXISTS, BUT NOT IN THAT COLOR OR SIZE ---
-        # If strict search returned nothing (e.g. user asked for CloudWarm Hoodie in Navy/XL, 
-        # but it only exists in Black/M), drop the color/size filters and fetch by NAME ALONE!
         if not products:
             products = (
                 supabase
@@ -452,26 +461,18 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 .data
             )
 
-
-        # --- FALLBACK 2: SEARCH OTHER PRODUCTS IN THE SAME CATEGORY OR KEYWORD---
-        # If product name search failed completely, try finding alternative items in the same Category
-        # matching the user's requested Color and/or Size!
+        # --- FALLBACK 2: SEARCH OTHER PRODUCTS IN THE SAME CATEGORY OR KEYWORD ---
         if not products and (intent.category or intent.keyword):
-            alt_query = (
-                supabase.table("products")
-                .select("*")
-            )
+            alt_query = supabase.table("products").select("*")
             if intent.category:
                 alt_query = alt_query.eq("category", intent.category)
             elif intent.keyword:
                 clean_kw = intent.keyword.lower().replace("tshirts", "t-shirt").replace("tshirt", "t-shirt").rstrip('s')
                 alt_query = alt_query.or_(f"name.ilike.%{clean_kw}%,description.ilike.%{clean_kw}%,category.ilike.%{clean_kw}%")
 
-            # Match requested color if provided
             if intent.color:
                 alt_query = alt_query.ilike("color", intent.color.capitalize())
 
-            # Match requested size if provided
             if intent.size:
                 size_val = (
                     intent.size.value
@@ -482,61 +483,39 @@ def search_product(state: ShoppingState) -> ShoppingState:
 
             products = alt_query.execute().data
 
-        # print("Extracted Intent:", intent)
-        # print("Product Name:", intent.product_name)
-        # print("Category:", intent.category)
-        # print("Color:", intent.color)
-        # print("Size:", intent.size)
-        # print("Price Max:", intent.price_max)
-        # print(f"Products Found in DB: {len(products)}")
-        # return {"products": products}
-
     # TIER 2: GENERAL CATEGORY & ATTRIBUTE FILTERING
     # Used when user asks for general items like: "Show me black hoodies under 1500"
     else:
-        # Base query: select all columns from products table
         query = supabase.table("products").select("*")
 
-        # Prepare normalized keyword search (handles plurals like "tshirts" -> "t-shirt")
         clean_kw = ""
         if intent.keyword:
             clean_kw = intent.keyword.lower().replace("tshirts", "t-shirt").replace("tshirt", "t-shirt").rstrip('s')
 
-        # Filter by Category (exact match, e.g. category = 'Hoodie')
         if intent.category:
             query = query.eq("category", intent.category)
         elif intent.keyword:
             query = query.or_(f"name.ilike.%{clean_kw}%,description.ilike.%{clean_kw}%,category.ilike.%{clean_kw}%")
 
-        # Filter by Color (case-insensitive match, e.g. color = 'Black')
         if intent.color:
             query = query.ilike("color", intent.color.capitalize())
 
-        # Filter by Size (exact match on enum string value, e.g. size = 'M')
         if intent.size:
-            # Extract raw string value from Enum if needed
             size_val = intent.size.value if hasattr(intent.size, "value") else intent.size
             query = query.eq("size", size_val)
 
-        # Filter by Minimum Price (.gte = Greater Than or Equal to)
         if intent.price_min is not None:
             query = query.gte("price", intent.price_min)
 
-        # Filter by Maximum Price (.lte = Less Than or Equal to)
         if intent.price_max is not None:
             query = query.lte("price", intent.price_max)
 
-        # Order by price ascending by default
         query = query.order("price", desc=False)
-
-        # Execute the general category query
         products = query.execute().data
 
-
-        # --- ATTRIBUTE FALLBACK FOR ZERO MATCHES (e.g. Orange T-Shirt) ---
-        # If filtering by specific color/size/budget returned 0 items, fetch ALL
-        # products in that category ordered by price ascending!
-        # =====================================================================
+        # --- FALLBACK 1: STRICT CATEGORY PRESERVATION ---
+        # If requested color/size/budget yielded 0 items, keep category STRICT!
+        # Fetch ALL items in that category so user sees alternative colors/sizes (e.g., non-orange T-Shirts)
         if not products and intent.category:
             products = (
                 supabase.table("products")
@@ -547,9 +526,8 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 .data
             )
 
-        # --- COLOR SAFETY NET FALLBACK FOR ZERO MATCHES ---
-        # If category/keyword search with specific color yielded 0 items, fetch products matching requested COLOR alone!
-        # Prevents leaking into the multi-category store balancer.
+        # --- FALLBACK 2: COLOR MATCH (WHEN NO CATEGORY SPECIFIED) ---
+        # If user asked for a color with no specific category match, fetch items matching requested color
         if not products and intent.color:
             products = (
                 supabase.table("products")
@@ -560,58 +538,39 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 .data
             )
 
-        #=====================================================================
-        # --- SMART FALLBACK FOR ZERO MATCHES (e.g., "office" yielded 0 rows) ---
+        # --- FALLBACK 3: KEYWORD SEARCH ---
+        if not products and intent.keyword:
+            products = (
+                supabase.table("products")
+                .select("*")
+                .or_(f"name.ilike.%{clean_kw}%,description.ilike.%{clean_kw}%,category.ilike.%{clean_kw}%")
+                .order("price", desc=False)
+                .limit(10)
+                .execute()
+                .data
+            )
+
+        # --- FALLBACK 4: MULTI-CATEGORY STORE BALANCER (LAST RESORT ONLY) ---
+        # Triggers ONLY if the query has no valid category, color, or keyword match anywhere in DB
         if not products:
-            # Case A: Budget or attribute exceeded on a specific Category (e.g. Hoodies under 500)
-            # Fetch the cheapest items in THAT specific category!
-            if intent.category:
-                products = (
+            all_cats = supabase.table("products").select("category").execute().data
+            distinct_categories = list(set(p.get("category") for p in all_cats if p.get("category")))
+
+            balanced_products = []
+            for cat in distinct_categories:
+                cat_items = (
                     supabase.table("products")
                     .select("*")
-                    .eq("category", intent.category)
+                    .eq("category", cat)
                     .order("price", desc=False)
-                    .limit(10)
+                    .limit(5)
                     .execute()
                     .data
                 )
-            elif intent.keyword:
-                # Fetch items matching keyword/category search terms before dumping store mix
-                products = (
-                    supabase.table("products")
-                    .select("*")
-                    .or_(f"name.ilike.%{clean_kw}%,category.ilike.%{clean_kw}%")
-                    .order("price", desc=False)
-                    .limit(10)
-                    .execute()
-                    .data
-                )
-            else:
-                # 1. Fetch distinct categories dynamically present in Supabase
-                all_cats = supabase.table("products").select("category").execute().data
-                distinct_categories = list(set(p.get("category") for p in all_cats if p.get("category")))
+                balanced_products.extend(cat_items)
+            products = balanced_products if balanced_products else supabase.table("products").select("*").order("price", desc=False).limit(15).execute().data
 
-                # 2. Fetch top 5 items for every category in the DB
-                balanced_products = []
-                for cat in distinct_categories:
-                    cat_items = (
-                        supabase.table("products")
-                        .select("*")
-                        .eq("category", cat)
-                        .order("price", desc=False)
-                        .limit(5)
-                        .execute()
-                        .data
-                    )
-                    balanced_products.extend(cat_items)
-                products = balanced_products if balanced_products else supabase.table("products").select("*").order("price", desc=False).limit(15).execute().data
-
-            # Case B: Style/Vibe Keyword like "office" returned 0 exact DB matches
-            # Fallback safety net if table categories are missing
-            if not products:
-                products = supabase.table("products").select("*").order("price", desc=False).limit(15).execute().data
-
-    # DYNAMIC SORTING HANDLER (Processes LLM intent.sort field or defaults to Price Ascending)
+    # DYNAMIC SORTING HANDLER
     sort_val = str(getattr(intent, 'sort', '') or '').lower()
     if ("price_desc" in sort_val or "desc" in sort_val) and products:
         products.sort(key=lambda x: float(x.get("price", 0)), reverse=True)
@@ -673,6 +632,7 @@ def search_product(state: ShoppingState) -> ShoppingState:
         "products": products,
         "similar_products": similar_products
     }
+
 
 @traceable(name="Generate Response", description="Convert structured product data into a natural language reply.")
 def generate_response(state: ShoppingState) -> ShoppingState:
