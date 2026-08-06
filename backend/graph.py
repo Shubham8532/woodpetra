@@ -114,24 +114,30 @@ def general_chat(state: ShoppingState, config: RunnableConfig):
     history_text = build_conversation(history)
 
     prompt = f"""
-Below is the conversation history.
+    Below is the conversation history.
 
-Use it to answer the current user's question.
+    Use it to answer the current user's question directly and naturally.
 
-If the user asks something like:
-- What is my name?
-- Which product did I ask about?
-- What's its price?
-- What color did I choose?
+    If the user asks something like:
+    - What is my name?
+    - Which product did I ask about?
+    - What's its price?
+    - What color did I choose?
+    - Follow-up questions about sizes, colors, or options (e.g., "Sizes?", "Colors?")
 
-You MUST answer using the conversation history if the answer exists there.
+    You MUST answer using the conversation history if the answer exists there.
 
-Conversation History:
-{history_text}
+    CRITICAL INSTRUCTIONS:
+    - Answer directly without meta-commentary.
+    - DO NOT apologize, critique, or mention previous assistant mistakes or past responses (never say "I made a mistake in my previous response" or "You asked about X, not Y").
+    - Keep responses clean, concise, and helpful (1-2 sentences).
 
-Current User:
-{state["query"]}
-"""
+    Conversation History:
+    {history_text}
+
+    Current User Query:
+    {state["query"]}
+    """
 
     # print("=" * 80)
     # print(prompt)
@@ -257,10 +263,12 @@ def extract_intent(
     - If a specific item is not mentioned, prioritize inferring the most logical category over leaving it null.
     - Also capture the style term in `keyword` if applicable.
 
-    CONTEXT RETENTION RULES:
-    1. If the user asks general questions like "which colors are available", "what sizes do you have", or "show me more", DO NOT set `product_name` to a specific item unless explicitly named.
+    CONTEXT RETENTION & ATTRIBUTE RULES:
+    1. Short attribute queries like "Sizes?", "Sizes available?", "Colors?", "Price?", or "Options?" MUST be classified as intent='search' (NOT general or greeting) so inventory context is fetched.
     2. Maintain the `category` from previous turns ({active_category}) if no new category is mentioned.
-    3. Reset `price_max` to null on new queries unless a budget is explicitly requested.
+    3. If the user sends greetings like "Hello?", "Hi", or "Hey" while an active session category exists ({active_category}), classify intent as 'search' and retain category='{active_category}' to keep context active instead of resetting.
+    4. If the user asks general questions like "which colors are available", "what sizes do you have", or "show me more", DO NOT set `product_name` to a specific item unless explicitly named.
+    5. Reset `price_max` to null on new queries unless a budget is explicitly requested.
 
     If the current shopping question refers to a previous product using words like "it", "this", "that", or "the product", infer the product_name from the previous conversation.
     """
