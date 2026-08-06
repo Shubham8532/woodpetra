@@ -258,6 +258,14 @@ def extract_intent(
       * "pant", "pants", "trouser", "trousers", "slacks" -> category: "Trouser"
       * "jean", "jeans", "denim" -> category: "Jeans"
 
+    RELATIONSHIP & RECIPIENT INFERENCE RULES:
+    - Infer gender, style, and category from Hindi, Hinglish, and English relation terms (e.g., mother, sister, behan, mummy, father, papa, uncle, chacha, mama, dada, bhai, etc.):
+      * Older/Formal Male Relatives (father, papa, uncle, chacha, mama, dada): Prioritize `category="Shirt"` or `category="Trouser"` and set `gender="Men"`.
+      * Younger/Casual Male Relatives (brother, bhai, son, nephew, friend): Prioritize `category="T-Shirt"`, `category="Hoodie"`, or `category="Joggers"` and set `gender="Men"`.
+      * Female Relatives (mother, mummy, sister, behan, aunt, chachi, mami, wife, girlfriend):
+        - If female-specific items are mentioned or implied (e.g., saree, suit, kurti, dress, top, lehenga), DO NOT force male categories. Set `category=None` so the assistant can politely inform that traditional women's wear is out of stock.
+        - If asking generally for gifts for females without a specific item, set `gender="Women"` and `category=None` (or infer unisex items like "Hoodie" / "Cap").
+
     OCCASION & STYLE INFERENCE:
     - If the user asks for an occasion, vibe, or style (e.g. "office", "work", "gym", "party", "formal", "casual"), infer the primary catalog category that best matches that occasion and assign it to `category` (e.g., "Shirt" or "Trouser" for office/formal; "T-Shirt" or "Hoodie" for casual/gym).
     - If a specific item is not mentioned, prioritize inferring the most logical category over leaving it null.
@@ -549,7 +557,7 @@ def search_product(state: ShoppingState) -> ShoppingState:
                         supabase.table("products")
                         .select("*")
                         .eq("category", cat)
-                        .limit(2)
+                        .limit(5)
                         .execute()
                         .data
                     )
