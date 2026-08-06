@@ -128,31 +128,18 @@ def general_chat(state: ShoppingState, config: RunnableConfig):
 
     history_text = build_conversation(history)
 
-    prompt = f"""
-    Below is the conversation history.
+    prompt = f"""Use conversation history to directly answer the user query.
 
-    Use it to answer the current user's question directly and naturally.
+Rules:
+1. Memory Retrieval: For follow-ups or queries about user info, past products, prices, colors, sizes, or options (e.g., "What is my name?", "Which product did I ask about?", "Sizes?"), extract details directly from Conversation History.
+2. Direct & Concise: Answer in 1-2 clean, helpful sentences without meta-commentary.
+3. No Apology/Critique: NEVER apologize, mention past assistant mistakes, or reference previous response errors.
 
-    If the user asks something like:
-    - What is my name?
-    - Which product did I ask about?
-    - What's its price?
-    - What color did I choose?
-    - Follow-up questions about sizes, colors, or options (e.g., "Sizes?", "Colors?")
+Conversation History:
+{history_text}
 
-    You MUST answer using the conversation history if the answer exists there.
-
-    CRITICAL INSTRUCTIONS:
-    - Answer directly without meta-commentary.
-    - DO NOT apologize, critique, or mention previous assistant mistakes or past responses (never say "I made a mistake in my previous response" or "You asked about X, not Y").
-    - Keep responses clean, concise, and helpful (1-2 sentences).
-
-    Conversation History:
-    {history_text}
-
-    Current User Query:
-    {state["query"]}
-    """
+Current User Query:
+{state["query"]}"""
 
     # print("=" * 80)
     # print(prompt)
@@ -260,42 +247,27 @@ def extract_intent(
     # structured_output = llm.with_structured_output(ShoppingIntentModel)
 
     system_prompt = INTENT_PROMPT + f"""
-    Active Session Category: {active_category if active_category else "None"}
+Active Category: {active_category if active_category else "None"}
+History (Last 5 turns):
+{history_text}
 
-    Previous conversation (Last 5 turns):
-    {history_text}
+MAPPING & INFERENCE:
+- Typos/Slang: "hoofie/sweatshirt" -> Hoodie | "shrt/formal shirt" -> Shirt | "tshirt/tee" -> T-Shirt | "pant/trouser/slacks" -> Trouser | "jean/denim" -> Jeans.
+- Relatives (Hindi/Hinglish/English):
+  * Older male (father/papa/uncle/chacha): Set category="Shirt"/"Trouser", gender="Men".
+  * Younger male (brother/bhai/friend): Set category="T-Shirt"/"Hoodie"/"Joggers", gender="Men".
+  * Female (mother/mummy/sister/behan/wife): For traditional/women wear (saree/kurti/dress), set category=None. For general gifts, set gender="Women", category=None (or infer unisex Hoodie/Cap).
+- Occasion/Vibe: Map style terms ("office", "gym", "party") to logical categories ("Shirt"/"Trouser" for formal, "T-Shirt"/"Hoodie" for casual) and store term in `keyword`. Prioritize category inference over null.
 
-    FUZZY TYPO & PHONETIC CATEGORY MAPPING:
-    - Automatically infer and map typos, slang, or misspelled items to standard catalog categories:
-      * Phonetic/spelling typos like "hoofie", "hoofies", "hoddie", "hoddies", "sweatshirt" -> category: "Hoodie"
-      * "shrt", "shrts", "formal shirt", "casual shirt" -> category: "Shirt"
-      * "tshirt", "t-shirt", "tee", "tees" -> category: "T-Shirt"
-      * "pant", "pants", "trouser", "trousers", "slacks" -> category: "Trouser"
-      * "jean", "jeans", "denim" -> category: "Jeans"
-
-    RELATIONSHIP & RECIPIENT INFERENCE RULES:
-    - Infer gender, style, and category from Hindi, Hinglish, and English relation terms (e.g., mother, sister, behan, mummy, father, papa, uncle, chacha, mama, dada, bhai, etc.):
-      * Older/Formal Male Relatives (father, papa, uncle, chacha, mama, dada): Prioritize `category="Shirt"` or `category="Trouser"` and set `gender="Men"`.
-      * Younger/Casual Male Relatives (brother, bhai, son, nephew, friend): Prioritize `category="T-Shirt"`, `category="Hoodie"`, or `category="Joggers"` and set `gender="Men"`.
-      * Female Relatives (mother, mummy, sister, behan, aunt, chachi, mami, wife, girlfriend):
-        - If female-specific items are mentioned or implied (e.g., saree, suit, kurti, dress, top, lehenga), DO NOT force male categories. Set `category=None` so the assistant can politely inform that traditional women's wear is out of stock.
-        - If asking generally for gifts for females without a specific item, set `gender="Women"` and `category=None` (or infer unisex items like "Hoodie" / "Cap").
-
-    OCCASION & STYLE INFERENCE:
-    - If the user asks for an occasion, vibe, or style (e.g. "office", "work", "gym", "party", "formal", "casual"), infer the primary catalog category that best matches that occasion and assign it to `category` (e.g., "Shirt" or "Trouser" for office/formal; "T-Shirt" or "Hoodie" for casual/gym).
-    - If a specific item is not mentioned, prioritize inferring the most logical category over leaving it null.
-    - Also capture the style term in `keyword` if applicable.
-
-    CONTEXT RETENTION & ATTRIBUTE RULES:
-    1. Short attribute queries like "Sizes?", "Sizes available?", "Colors?", "Price?", or "Options?" MUST be classified as intent='search' (NOT general or greeting) so inventory context is fetched.
-    2. Maintain the `category` from previous turns ({active_category}) if no new category is mentioned.
-    3. If the user sends greetings like "Hello?", "Hi", or "Hey" while an active session category exists ({active_category}), classify intent as 'search' and retain category='{active_category}' to keep context active instead of resetting.
-    4. If the user asks general questions like "which colors are available", "what sizes do you have", or "show me more", DO NOT set `product_name` to a specific item unless explicitly named.
-    5. Reset `price_max` to null on new queries unless a budget is explicitly requested.
-    6. If the user explicitly asks for "other products", "other items", "different categories", or "what else do you have", CLEAR `category` (set `category=None`) so the database returns products across ALL store categories.
-
-    If the current shopping question refers to a previous product using words like "it", "this", "that", or "the product", infer the product_name from the previous conversation.
-    """
+CONTEXT & ATTRIBUTES:
+1. Attribute queries ("Sizes?", "Colors?", "Price?", "Options?") MUST be intent='search'.
+2. Maintain previous category ({active_category}) if no new category is mentioned.
+3. Greetings ("Hi", "Hello") with active category ({active_category}) MUST set intent='search' and category='{active_category}'.
+4. General queries ("which colors available", "show more") MUST NOT set `product_name`.
+5. Reset `price_max` to null unless budget is explicitly requested.
+6. Requests for "other products", "different categories", or "what else do u have" MUST set category=None.
+7. Infer `product_name` from history when query refers to "it", "this", "that", or "the product".
+"""
 
     # print("=" * 80)
     # print("SYSTEM PROMPT")
@@ -774,32 +746,18 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     distinct_sizes = sorted(list(set(str(p.get("size")) for p in products if p.get("size"))))
     sizes_summary = ", ".join(distinct_sizes) if distinct_sizes else "Various sizes available"
 
-    prompt = f"""
-    Customer Query:
-    {state["query"]}
+    prompt = f"""Query: {state["query"]}
+Intent: {intent_str}
+Store Categories: {categories_str}
+Stock Colors: {colors_summary}
+Stock Sizes: {sizes_summary}
+Top Products: {prompt_products if prompt_products else "None"}
 
-    Shopping Intent:
-    {intent_str}
-
-    Available Product Categories in Store:
-    {categories_str}
-
-    All Available Colors for These Items in Stock:
-    {colors_summary}
-
-    All Available Sizes in Stock:
-    {sizes_summary}
-
-    Top Products in Context (Pre-Sorted):
-    {prompt_products if prompt_products else "None"}
-
-    RESPONSE INSTRUCTIONS:
-    - Respond directly to the customer's query using the context provided above.
-    - If the customer asks strictly about COLORS, state ONLY the available colors ({colors_summary}). DO NOT list sizes unless asked.
-    - If the customer asks strictly about SIZES, state ONLY the available sizes ({sizes_summary}). DO NOT list colors unless asked.
-    - If the customer asks for the cheapest or lowest priced item, quote the VERY FIRST product from 'Top Products in Context' (index 0).
-    - Keep the text concise, friendly, and helpful (2-3 sentences max).
-    """
+INSTRUCTIONS:
+- Answer directly using the context above in 2-3 concise, friendly sentences.
+- If query is strictly about COLORS, state ONLY {colors_summary}. Do not list sizes.
+- If query is strictly about SIZES, state ONLY {sizes_summary}. Do not list colors.
+- If asking for the cheapest/lowest price item, quote the VERY FIRST product from Top Products (index 0)."""
 
     response = invoke_with_fallback(
         [
