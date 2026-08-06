@@ -519,7 +519,8 @@ def search_product(state: ShoppingState) -> ShoppingState:
         if intent.price_max is not None:
             query = query.lte("price", intent.price_max)
 
-
+        # Order by price ascending by default
+        query = query.order("price", desc=False)
 
         # Execute the general category query
         products = query.execute().data
@@ -527,13 +528,14 @@ def search_product(state: ShoppingState) -> ShoppingState:
 
         # --- ATTRIBUTE FALLBACK FOR ZERO MATCHES (e.g. Orange T-Shirt) ---
         # If filtering by specific color/size/budget returned 0 items, fetch ALL
-        # products in that category so state keeps the complete color/size inventory!
+        # products in that category ordered by price ascending!
         # =====================================================================
         if not products and intent.category:
             products = (
                 supabase.table("products")
                 .select("*")
                 .eq("category", intent.category)
+                .order("price", desc=False)
                 .execute()
                 .data
             )
@@ -557,7 +559,6 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 # 1. Fetch distinct categories dynamically present in Supabase
                 all_cats = supabase.table("products").select("category").execute().data
                 distinct_categories = list(set(p.get("category") for p in all_cats if p.get("category")))
-                # products = supabase.table("products").select("*").limit(15).execute().data
 
                 # 2. Fetch top 5 items for every category in the DB
                 balanced_products = []
@@ -566,46 +567,26 @@ def search_product(state: ShoppingState) -> ShoppingState:
                         supabase.table("products")
                         .select("*")
                         .eq("category", cat)
+                        .order("price", desc=False)
                         .limit(5)
                         .execute()
                         .data
                     )
                     balanced_products.extend(cat_items)
-                products = balanced_products if balanced_products else supabase.table("products").select("*").limit(15).execute().data
+                products = balanced_products if balanced_products else supabase.table("products").select("*").order("price", desc=False).limit(15).execute().data
 
             # Case B: Style/Vibe Keyword like "office" returned 0 exact DB matches
-            # Fall back to fetching popular/formal items (Shirts / Trousers / Store items) so cards render!
             # Fallback safety net if table categories are missing
             if not products:
-                products = supabase.table("products").select("*").limit(15).execute().data
-       # =================================================================================
+                products = supabase.table("products").select("*").order("price", desc=False).limit(15).execute().data
 
-        # # --- FALLBACK: IF NO ITEMS FOUND UNDER PRICE BUDGET ---
-        # # Fetch the cheapest items in that category ordered by price ascending!
-        # # --- UNIVERSAL FALLBACK: IF NO MATCHES FOUND IN DB ---
-        # if not products:
-        #     # Case A: Budget exceeded or specific filter yielded 0 items -> Fetch cheapest in category/keyword
-        #     if intent.price_max is not None or intent.color or intent.size:
-        #         fallback_query = supabase.table("products").select("*").order("price", desc=False).limit(5)
-        #         if intent.category:
-        #             fallback_query = fallback_query.eq("category", intent.category)
-        #         products = fallback_query.execute().data
-
-        #     # Case B: Unlisted keyword like "dresses" returned 0 rows -> Fetch 5 popular store items so UI cards still render!
-        #     if not products:
-        #         print(f"No DB rows matched keyword '{intent.keyword}'. Fetching store featured fallback products...")
-        #         products = supabase.table("products").select("*").limit(5).execute().data
-
-    # RECOMMENDED / SIMILAR PRODUCTS QUERY
-    # Fetch up to 4 other items in the same category (matching color/size if possible)
-    # excluding the primary product SKUs so the UI carousel has relevant items to show.
-
-    # DYNAMIC SORTING HANDLER (Processes LLM intent.sort field)
+    # DYNAMIC SORTING HANDLER (Processes LLM intent.sort field or defaults to Price Ascending)
     sort_val = str(getattr(intent, 'sort', '') or '').lower()
-    if ("price_asc" in sort_val or "asc" in sort_val) and products:
-        products.sort(key=lambda x: float(x.get("price", float("inf"))))
-    elif ("price_desc" in sort_val or "desc" in sort_val) and products:
+    if ("price_desc" in sort_val or "desc" in sort_val) and products:
         products.sort(key=lambda x: float(x.get("price", 0)), reverse=True)
+    elif products:
+        # Default: ALWAYS sort price ascending so index 0 is guaranteed to be the lowest priced item!
+        products.sort(key=lambda x: float(x.get("price", float("inf"))))
 
     similar_products = []
     category_to_recommend = intent.category
@@ -621,13 +602,14 @@ def search_product(state: ShoppingState) -> ShoppingState:
             supabase.table("products")
             .select("*")
             .eq("category", category_to_recommend)
+            .order("price", desc=False)
         )
 
         # Exclude primary product SKUs from recommendations
         if primary_skus:
             rec_query = rec_query.not_.in_("sku", primary_skus)
 
-        # Try mactching color if provided
+        # Try matching color if provided
         if intent.color:
             rec_query = rec_query.ilike("color", intent.color.capitalize()) 
 
@@ -641,6 +623,7 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 .select("*")
                 .eq("category", category_to_recommend)
                 .not_.in_("sku", primary_skus)
+                .order("price", desc=False)
                 .limit(5)
                 .execute()
                 .data
