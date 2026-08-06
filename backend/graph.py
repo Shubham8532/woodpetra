@@ -6,7 +6,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.runnables import RunnableConfig
 # from langchain_core.output_parsers import PydanticOutputParser
 from langsmith import traceable
-from backend.config import llm_fast, llm_strong, supabase
+from backend.config import llm_fast, llm_70B, llm_120B, supabase
 # from langgraph.checkpoint.serde.types import ERROR_ON_UNHANDLED
 import warnings
 warnings.filterwarnings("ignore", message=".*Deserializing unregistered type.*")
@@ -29,6 +29,21 @@ from backend.prompt import (
 razorpay_client = razorpay.Client(
     auth=(os.environ.get("RAZORPAY_KEY_ID"), os.environ.get("RAZORPAY_KEY_SECRET"))
 )
+
+def invoke_with_fallback(messages, schema=None):
+    """
+    Executes primary 70B model with instant failover to 120B on rate limit or error.
+    Supports both text generation and structured Pydantic schema extraction.
+    """
+    # Bind schema if passed, otherwise use raw LLM
+    model_70b = llm_70b.with_structured_output(schema) if schema else llm_70b
+    model_120b = llm_120b.with_structured_output(schema) if schema else llm_120b
+
+    try:
+        return model_70b.invoke(messages)
+    except Exception as e:
+        print(f"⚠️ Primary 70B error ({e}). Failing over to GPT-OSS 120B...")
+        return model_120b.invoke(messages)
 
 @traceable(name="Router", description="Route the user query to the appropriate workflow path.")
 def router(state: ShoppingState):
@@ -277,6 +292,7 @@ def extract_intent(
     3. If the user sends greetings like "Hello?", "Hi", or "Hey" while an active session category exists ({active_category}), classify intent as 'search' and retain category='{active_category}' to keep context active instead of resetting.
     4. If the user asks general questions like "which colors are available", "what sizes do you have", or "show me more", DO NOT set `product_name` to a specific item unless explicitly named.
     5. Reset `price_max` to null on new queries unless a budget is explicitly requested.
+    6. If the user explicitly asks for "other products", "other items", "different categories", or "what else do you have", CLEAR `category` (set `category=None`) so the database returns products across ALL store categories.
 
     If the current shopping question refers to a previous product using words like "it", "this", "that", or "the product", infer the product_name from the previous conversation.
     """
@@ -313,13 +329,21 @@ def extract_intent(
 
 
     # STEP 2: STRONG 70B MODEL (Fallback with Native Structured Output)
-    structured_output = llm_strong.with_structured_output(ShoppingIntentModel)
+    # structured_output = llm_strong.with_structured_output(ShoppingIntentModel)
 
-    result = structured_output.invoke(
-        [
-            ("system", system_prompt),
-            ("human", query)
-        ]
+    # result = structured_output.invoke(
+    #     [
+    #         ("system", system_prompt),
+    #         ("human", query)
+    #     ]
+    # )
+
+    result = invoke_with_fallback(
+    [
+        ("system", system_prompt),
+        ("human", query)
+    ],
+    schema=ShoppingIntentModel
     )
 
     # # Smart Fallback: Iff no category or produvt_name was matched, assign raw query to keyword
@@ -528,6 +552,19 @@ def search_product(state: ShoppingState) -> ShoppingState:
         # Execute the general category query
         products = query.execute().data
 
+
+        # --- ATTRIBUTE FALLBACK FOR ZERO MATCHES (e.g. Orange T-Shirt) ---
+        # If filtering by specific color/size/budget returned 0 items, fetch ALL
+        # products in that category so state keeps the complete color/size inventory!
+        # =====================================================================
+        if not products and intent.category:
+            products = (
+                supabase.table("products")
+                .select("*")
+                .eq("category", intent.category)
+                .execute()
+                .data
+            )
 
         #=====================================================================
         # --- SMART FALLBACK FOR ZERO MATCHES (e.g., "office" yielded 0 rows) ---
@@ -764,7 +801,7 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     - Keep the text concise, friendly, and helpful (2-3 sentences max).
     """
 
-    response = llm_strong.invoke(
+    response = invoke_with_fallback(
         [
             ("system", RESPONSE_PROMPT),
             ("human", prompt)
