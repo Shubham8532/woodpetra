@@ -124,15 +124,19 @@ async def whatsapp_webhook(request: Request):
                 "Content-Type": "application/json"
             }
 
-            # STRICT FAST-PATH EXIT FOR GREETINGS (Bypasses LLM entirely -> < 200ms)
+            # STRICT FAST-PATH EXIT FOR STANDALONE GREETINGS ONLY (< 200ms)
             clean_text = "".join(ch for ch in user_text.lower().strip() if ch.isalnum() or ch == " ")
             GREETING_WORDS = {
                 "hi", "hii", "hiii", "hello", "hey", "helo", "hlo", "hola",
                 "good morning", "good afternoon", "good evening", "goodnight",
-                "gud morning", "gud mrng", "greetings"
+                "gud morning", "gud mrng", "greetings", "namaste", "namaskar"
             }
-            
-            if clean_text in GREETING_WORDS or any(clean_text.startswith(g) for g in GREETING_WORDS):
+
+            # Only intercept if the query is STRICTLY a standalone greeting string (1-2 words max)
+            # Any query with extra words (e.g., "hi do u have saree") passes directly to LangGraph!
+            is_standalone_greeting = clean_text in GREETING_WORDS
+
+            if is_standalone_greeting:
                 greet_payload = {
                     "messaging_product": "whatsapp",
                     "recipient_type": "individual",

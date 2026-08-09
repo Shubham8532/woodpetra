@@ -50,7 +50,14 @@ ENTITIES:
 - Sort: cheap, cheapest, budget, low price -> sorting_preference = "price_asc"
 - Price: "under ₹700" -> price_max = 700 | "above ₹1000" -> price_min = 1000
 - Size: XS, S, M, L, XL, XXL only. Oversized/Slim Fit belong in `fit`.
-- Product Name: Exact named item ("Nike Air Max 90") or checkout item ("summer lite shorts"). Generic items ("Blue T-Shirt") -> product_name = null."""
+- Product Name: Exact named item ("Nike Air Max 90") or checkout item ("summer lite shorts"). Generic items ("Blue T-Shirt") -> product_name = null.
+
+DYNAMIC CONTEXT & ENTITY RESET RULES:
+1. PRIMARY SOURCE: Extract `color`, `size`, `product_name`, `price_min`, and `price_max` strictly from the Current User Query string.
+2. PRONOUN FOLLOW-UP: ONLY carry over attributes or active items from History if the Current User Query uses explicit reference pronouns or attribute follow-up phrases.
+3. NEW SUBJECT RESET: If the Current User Query introduces a new item, category, or general question without reference pronouns, do NOT carry over `color`, `size`, `product_name`, `price_min`, or `price_max` from history. Set them to null.
+4. SINGLE-TURN KEYWORDS: `keyword` (terms outside the allowed category list) is strictly single-turn. NEVER carry over `keyword` from previous conversation turns.
+"""
 
 ####
 
