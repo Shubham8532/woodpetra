@@ -259,16 +259,15 @@ MAPPING & INFERENCE:
   * Female (mother/mummy/sister/behan/wife): For traditional/women wear (saree/kurti/dress), set category=None. For general gifts, set gender="Women", category=None (or infer unisex Hoodie/Cap).
 - Occasion/Vibe: Map style terms ("office", "gym", "party") to logical categories ("Shirt"/"Trouser" for formal, "T-Shirt"/"Hoodie" for casual) and store term in `keyword`. Prioritize category inference over null.
 
-CONTEXT & ATTRIBUTES:
+CCONTEXT & ATTRIBUTES:
 1. Attribute queries ("Sizes?", "Colors?", "Price?", "Options?") MUST be intent='search'.
 2. Maintain previous category ({active_category}) if no new category is mentioned.
 3. Greetings ("Hi", "Hello") with active category ({active_category}) MUST set intent='search' and category='{active_category}'.
 4. General queries ("which colors available", "show more") MUST NOT set `product_name`.
-5. Reset `price_max` to null unless budget is explicitly requested.
+5. Reset `price_max` to null unless budget is explicitly requested in current query.
 6. Requests for "other products", "different categories", or "what else do u have" MUST set category=None.
 7. Infer `product_name` from history when query refers to "it", "this", "that", or "the product".
-8. Keywords (`keyword`) are strictly single-turn. NEVER carry over `keyword` from previous turns.
-"""
+8. SINGLE-TURN FILTERS: `color`, `size`, `price_min`, `price_max`, and `keyword` are strictly single-turn filters. NEVER carry them over from previous turns unless explicitly stated in the user's current message.
 
     # print("=" * 80)
     # print("SYSTEM PROMPT")
@@ -324,10 +323,17 @@ CONTEXT & ATTRIBUTES:
     #     clean_kw = query.lower().replace("show me", "").replace("do you have", "").strip()
     #     result.keyword = clean_kw
 
-    return{
+    # Reset stale single-turn filters on attribute inquiry queries
+    raw_query = query.lower()
+    if any(w in raw_query for w in ["color", "colour", "size", "rang", "available", "options"]):
+        result.color = None
+        result.size = None
+        result.price_max = None
+        result.price_min = None
+
+    return {
         "intent": result
     }
-
 
 
 @traceable(name="Context Decision", description="Decide whether to search the database or answer using conversation context.")
