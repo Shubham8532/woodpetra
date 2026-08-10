@@ -239,7 +239,7 @@ def extract_intent(
     """
 
     history = load_history(config)
-    history_text, active_category = build_conversation(history, max_turns=5)
+    history_text, active_category = build_conversation(history, max_turns=3)
 
     query = state['query']
 
@@ -267,6 +267,7 @@ CONTEXT & ATTRIBUTES:
 5. Reset `price_max` to null unless budget is explicitly requested.
 6. Requests for "other products", "different categories", or "what else do u have" MUST set category=None.
 7. Infer `product_name` from history when query refers to "it", "this", "that", or "the product".
+8. Keywords (`keyword`) are strictly single-turn. NEVER carry over `keyword` from previous turns.
 """
 
     # print("=" * 80)
@@ -652,7 +653,12 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     # Retrieve current products in memory
     products = state.get("products") or []
     similar_products = state.get("similar_products") or []
-    payment_url = state.get("payment_url")
+    # --- CLEAN STATE LEAK FIX ---
+    # Agar current turn checkout nahi hai, toh payment_url aur stale selection ko clear rakho
+    if intent_str == "checkout":
+        payment_url = state.get("payment_url")
+    else:
+        payment_url = None
     
     # Dynamic Array Sorting Safeguard (Applies to ALL products before slicing)
     sort_val = str(getattr(raw_intent, 'sort', '') or '').lower()
