@@ -668,7 +668,11 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     elif ("price_desc" in sort_val or "desc" in sort_val or "expensive" in raw_query or "highest" in raw_query) and products:
         products = sorted(products, key=lambda x: float(x.get("price", 0)), reverse=True)
 
-    selected_product = state.get("selected_product") or (products[0] if products else None)
+    # OLD (Stuck on old selected item):
+    # selected_product = state.get("selected_product") or (products[0] if products else None)
+
+    # NEW (Always updates selected_product to the top result of the current search):
+    selected_product = products[0] if products else None
 
     # 1. SPECIAL CHECKOUT RESPONSE HANDLER
     if intent_str == "checkout" and payment_url:
