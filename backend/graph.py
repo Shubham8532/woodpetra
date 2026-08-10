@@ -935,44 +935,80 @@ graph.add_node("search_products", search_product)
 graph.add_node("create_checkout_session", create_checkout_session)
 graph.add_node("generate_response", generate_response)
 
+# Parallel Fan-Out from START
 graph.add_edge(START, "router")
+graph.add_edge(START, "extract_intent")
 
+# Parallel Fan-In into context_decision
+graph.add_edge("router", "context_decision")
+graph.add_edge("extract_intent", "context_decision")
+
+# Router Gate Function
+def route_post_sync(state: ShoppingState) -> str:
+    route = state.get("route")
+    route_str = str(route.value if hasattr(route, "value") else route).lower()
+
+    # If general greeting/banter
+    if route_str == "general":
+        return "general_chat"
+
+    # Evaluate checkout intent
+    intent = state.get("intent")
+    intent_type = getattr(intent, "intent", intent)
+    intent_str = str(intent_type.value if hasattr(intent_type, "value") else intent_type).lower()
+
+    if intent_str == "checkout":
+        return "create_checkout_session"
+
+    # Evaluate context route
+    context_route = state.get("context_route")
+    context_str = str(getattr(context_route, "value", context_route)).lower()
+
+    if context_str == "context":
+        return "generate_response"
+
+    return "search_products"
+
+
+# Conditional Branching
 graph.add_conditional_edges(
-    "router",
-    decide_route,
+    "context_decision",
+    route_post_sync,
     {
-        RouteType.SHOPPING: "extract_intent",
-        RouteType.GENERAL: "general_chat",
-    },
-)
-# Extract Intent Edge -> Checkout vs Standard Flow
-graph.add_conditional_edges(
-    "extract_intent",
-    route_after_intent,
-    {
+        "general_chat": "general_chat",
         "create_checkout_session": "create_checkout_session",
-        "search_products": "context_decision",
+        "search_products": "search_products",
+        "generate_response": "generate_response",
     }
 )
 
-# Context Decision Edge
-graph.add_conditional_edges(
-    "context_decision",
-    decide_context,
-    {
-        ContextRoute.SEARCH: "search_products",
-        ContextRoute.CONTEXT: "generate_response",
-    },
-)
-
-
+# Terminal Edges
 graph.add_edge("search_products", "generate_response")
 graph.add_edge("create_checkout_session", "generate_response")
 graph.add_edge("general_chat", END)
 graph.add_edge("generate_response", END)
 
-
 memory = InMemorySaver()
 workflow = graph.compile(checkpointer=memory)
-# workflow
-workflow.get_graph().draw_mermaid()
+
+# # Context Decision Edge
+# graph.add_conditional_edges(
+#     "context_decision",
+#     decide_context,
+#     {
+#         ContextRoute.SEARCH: "search_products",
+#         ContextRoute.CONTEXT: "generate_response",
+#     },
+# )
+
+
+# graph.add_edge("search_products", "generate_response")
+# graph.add_edge("create_checkout_session", "generate_response")
+# graph.add_edge("general_chat", END)
+# graph.add_edge("generate_response", END)
+
+
+# memory = InMemorySaver()
+# workflow = graph.compile(checkpointer=memory)
+# # workflow
+# workflow.get_graph().draw_mermaid()
