@@ -666,6 +666,13 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     
     is_cheapest = "price_asc" in sort_val or "asc" in sort_val or "cheap" in raw_query or "lowest" in raw_query or "sasta" in raw_query
 
+    # SAFE CATEGORY LOCK: Preserve category filter from intent if present to prevent cross-category jumps
+    active_cat = getattr(raw_intent, "category", None) if hasattr(raw_intent, "category") else None
+    if active_cat and products:
+        filtered_by_cat = [p for p in products if str(p.get("category", "")).lower() == str(active_cat).lower()]
+        if filtered_by_cat:
+            products = filtered_by_cat
+
     if is_cheapest and products:
         products = sorted(products, key=lambda x: float(x.get("price", float("inf"))))
         eval_products = products[:1]  # Restrict LLM context strictly to index 0
@@ -738,7 +745,7 @@ INSTRUCTIONS:
 - Answer directly using the context above in 2-3 concise, friendly Hinglish sentences.
 - If query is strictly about COLORS, state ONLY the colors listed in Stock Colors ({colors_summary}) for the current active category. Do not list sizes or reference old topics.
 - If query is strictly about SIZES, state ONLY the sizes listed in Stock Sizes ({sizes_summary}). Do not list colors or reference old topics.
-- If asking for the cheapest/lowest price item, quote the VERY FIRST product from Top Products (index 0)."""
+- If asking for the cheapest/lowest price item, quote ONLY the product listed in Top Products (index 0). Do NOT reference items from other categories (e.g., do not switch from shorts to hoodies)."""
 
     response = invoke_with_fallback(
         [
