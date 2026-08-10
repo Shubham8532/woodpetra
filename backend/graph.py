@@ -4,7 +4,7 @@ from typing import List, Optional
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.runnables import RunnableConfig
-# from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.output_parsers import PydanticOutputParser
 from langsmith import traceable
 from backend.config import llm_fast, llm_70B, llm_120B, supabase
 # from langgraph.checkpoint.serde.types import ERROR_ON_UNHANDLED
@@ -46,16 +46,51 @@ razorpay_client = razorpay.Client(
 #         return model_120b.invoke(messages)
 
 def invoke_with_fallback(messages, schema=None):
-    """Executes primary 70B model with failover to 120B using clean JSON mode."""
-    # Use json_mode for fallback model so it never crashes on tool-calling validation
-    m70 = llm_70B.with_structured_output(schema) if schema else llm_70B
-    m120 = llm_120B.with_structured_output(schema, method="json_mode") if schema else llm_120B
+    """
+    Executes primary 70B model with failover to 120B.
+    Falls back gracefully to string Pydantic parsing if function calling fails on backup model.
+    """
+    if not schema:
+        try:
+            return llm_70B.invoke(messages)
+        except Exception as e:
+            print(f"⚠️ Primary 70B error ({e}). Failing over to 120B...")
+            return llm_120B.invoke(messages)
+
+    model_70b = llm_70B.with_structured_output(schema)
 
     try:
-        return m70.invoke(messages)
+        return model_70b.invoke(messages)
     except Exception as e:
-        print(f"⚠️ Primary 70B failed ({e}). Failing over to backup model...")
-        return m120.invoke(messages)
+        print(f"⚠️ Primary 70B error ({e}). Failing over to 120B...")
+        
+        # Try native structured output on 120B
+        try:
+            model_120b = llm_120B.with_structured_output(schema)
+            return model_120b.invoke(messages)
+        except Exception as fallback_err:
+            print(f"⚠️ 120B native tool-call failed ({fallback_err}). Retrying with Pydantic parser fallback...")
+            
+            parser = PydanticOutputParser(pydantic_object=schema)
+            format_instructions = parser.get_format_instructions()
+            
+            augmented_messages = list(messages)
+            augmented_messages.append((
+                "human", 
+                f"\n\nIMPORTANT: Return ONLY a raw valid JSON object matching this schema:\n{format_instructions}"
+            ))
+            
+            raw_response = llm_120B.invoke(augmented_messages)
+            
+            # Clean markdown code blocks or literal '"null"' strings
+            clean_text = (
+                raw_response.content
+                .replace("```json", "")
+                .replace("```", "")
+                .replace('"null"', "null")
+                .strip()
+            )
+            return parser.parse(clean_text)
 
 @traceable(name="Router", description="Route the user query to the appropriate workflow path.")
 def router(state: ShoppingState):
@@ -276,13 +311,13 @@ MAPPING & INFERENCE:
   * Female (mother/mummy/sister/behan/wife): For traditional/women wear (saree/kurti/dress), set category=None. For general gifts, set gender="Women", category=None (or infer unisex Hoodie/Cap).
 - Occasion/Vibe: Map style terms ("office", "gym", "party") to logical categories ("Shirt"/"Trouser" for formal, "T-Shirt"/"Hoodie" for casual) and store term in `keyword`. Prioritize category inference over null.
 
-CCONTEXT & ATTRIBUTES:
+CONTEXT & ATTRIBUTES:
 1. Attribute queries ("Sizes?", "Colors?", "Price?", "Options?") MUST be intent='search'.
-2. Maintain previous category ({active_category}) if no new category is mentioned.
+2. CATEGORY PERSISTENCE: Maintain previous category ({active_category}) ONLY IF the query continues discussing the same apparel. IF the user asks about new/unsupported items (e.g., saree, lehenga, kurti, shoes, watches), u MUST reset `category=None`.
 3. Greetings ("Hi", "Hello") with active category ({active_category}) MUST set intent='search' and category='{active_category}'.
 4. General queries ("which colors available", "show more") MUST NOT set `product_name`.
 5. Reset `price_max` to null unless budget is explicitly requested in current query.
-6. Requests for "other products", "different categories", or "what else do u have" MUST set category=None.
+6. Requests for "other products", "different categories", unlisted items, or "what else do u have" MUST set category=None.
 7. Infer `product_name` from history when query refers to "it", "this", "that", or "the product".
 8. SINGLE-TURN FILTERS: `color`, `size`, `price_min`, `price_max`, and `keyword` are strictly single-turn filters. NEVER carry them over from previous turns unless explicitly stated in the user's current message.
 9. ATTRIBUTE INQUIRIES: When the query asks about available colors, sizes, or options for the active category ({active_category}), set `color=None`, `size=None`, `price_min=None`, and `price_max=None` while maintaining `category='{active_category}'`.
