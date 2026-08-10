@@ -30,20 +30,32 @@ razorpay_client = razorpay.Client(
     auth=(os.environ.get("RAZORPAY_KEY_ID"), os.environ.get("RAZORPAY_KEY_SECRET"))
 )
 
+# def invoke_with_fallback(messages, schema=None):
+#     """
+#     Executes primary 70B model with instant failover to 120B on rate limit or error.
+#     Supports both text generation and structured Pydantic schema extraction.
+#     """
+#     # Bind schema if passed, otherwise use raw LLM
+#     model_70b = llm_70B.with_structured_output(schema) if schema else llm_70B
+#     model_120b = llm_120B.with_structured_output(schema) if schema else llm_120B
+
+#     try:
+#         return model_70b.invoke(messages)
+#     except Exception as e:
+#         print(f"⚠️ Primary 70B error ({e}). Failing over to GPT-OSS 120B...")
+#         return model_120b.invoke(messages)
+
 def invoke_with_fallback(messages, schema=None):
-    """
-    Executes primary 70B model with instant failover to 120B on rate limit or error.
-    Supports both text generation and structured Pydantic schema extraction.
-    """
-    # Bind schema if passed, otherwise use raw LLM
-    model_70b = llm_70B.with_structured_output(schema) if schema else llm_70B
-    model_120b = llm_120B.with_structured_output(schema) if schema else llm_120B
+    """Executes primary 70B model with failover to 120B using clean JSON mode."""
+    # Use json_mode for fallback model so it never crashes on tool-calling validation
+    m70 = llm_70B.with_structured_output(schema) if schema else llm_70B
+    m120 = llm_120B.with_structured_output(schema, method="json_mode") if schema else llm_120B
 
     try:
-        return model_70b.invoke(messages)
+        return m70.invoke(messages)
     except Exception as e:
-        print(f"⚠️ Primary 70B error ({e}). Failing over to GPT-OSS 120B...")
-        return model_120b.invoke(messages)
+        print(f"⚠️ Primary 70B failed ({e}). Failing over to backup model...")
+        return m120.invoke(messages)
 
 @traceable(name="Router", description="Route the user query to the appropriate workflow path.")
 def router(state: ShoppingState):
@@ -84,24 +96,17 @@ def load_history(config: RunnableConfig):
     # print("Clean:", clean_config)
 
     snapshots = list(workflow.get_state_history(clean_config))
-
     # print("Snapshots found:", len(snapshots))
+
+    # Slice only the most recent 12 snapshots (~3-4 turns) to avoid state duplication
+    recent_snapshots = snapshots[:12]
 
     history = []
     seen = set()
-    for snapshot in snapshots:
-        # print(snapshot.values)      # temporary
+    for snapshot in recent_snapshots:
         values = snapshot.values
 
-    #     if values.get("query") and values.get("response"):
-    #         history.append(values)
-
-    # # print("History:", len(history))
-    # return history
-        if not values.get("query"):
-            continue
-
-        if not values.get("response"):
+        if not values.get("query") or not values.get("response"):
             continue
 
         key = (values["query"], values["response"])
@@ -111,6 +116,7 @@ def load_history(config: RunnableConfig):
 
         seen.add(key)
         history.append(values)
+
     return history
 
 
@@ -207,19 +213,30 @@ def build_conversation(history, max_turns=3):
             continue
         seen_queries.add(query)
 
-        response = item.get('response', '')
+        raw_response = item.get('response', '')
+        
+        # Clean out UI kachra text before sending to history prompt
+        clean_response = (
+            raw_response.split("Matching Items")[0]
+            .split("Tap below")[0]
+            .replace("\n", " ")
+            .strip()
+        )
+        
+        # Truncate response to 120 chars to keep context light & crisp
+        short_response = (clean_response[:120] + "...") if len(clean_response) > 120 else clean_response
 
         conversation.append(
             f"User: {query}\n"
-            f"Assistant: {response}"
+            f"Assistant: {short_response}"
         )
 
-    # Limit to the last `max_turns`
+    # Limit strictly to the last `max_turns`
     conversation = conversation[:max_turns]
     conversation.reverse()  # Reverse to get Oldest -> Newest
 
-    history_text = "\n\n".join(conversation)   # join() simply combines all strings with two newlines between them.
-    return history_text, active_category  
+    history_text = "\n\n".join(conversation)
+    return history_text, active_category
 
 
 # ========================================== 
