@@ -2,7 +2,7 @@ import os
 import asyncio
 import httpx
 from pathlib import Path
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -69,7 +69,104 @@ async def chat_endpoint(request: ChatRequest):
         "similar_products": result.get("similar_products", [])
     }
 
-# --- 3. WHATSAPP WEBHOOK ENDPOINTS ---
+# --- 3. WHATSAPP WEBHOOK WORKER & ENDPOINTS ---
+
+async def process_whatsapp_message(user_text: str, from_number: str):
+    """Background task to process workflow and send WhatsApp response asynchronously."""
+    try:
+        url = f"https://graph.facebook.com/v26.0/{PHONE_NUMBER_ID}/messages"
+        headers = {
+            "Authorization": f"Bearer {ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        }
+
+        # FAST-PATH EXIT FOR STANDALONE GREETINGS ONLY
+        clean_text = "".join(ch for ch in user_text.lower().strip() if ch.isalnum() or ch == " ")
+        GREETING_WORDS = {
+            "hi", "hii", "hiii", "hello", "hey", "helo", "hlo", "hola",
+            "good morning", "good afternoon", "good evening", "goodnight",
+            "gud morning", "gud mrng", "greetings", "namaste", "namaskar"
+        }
+
+        if clean_text in GREETING_WORDS:
+            greet_payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": from_number,
+                "type": "text",
+                "text": {"body": "Hello! Welcome to Shubham Fashion. What apparel or style are you looking for today?"}
+            }
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(url, json=greet_payload, headers=headers)
+            return
+
+        # Execute LangGraph workflow in background
+        config = {"configurable": {"thread_id": f"wa_{from_number}"}}
+        result = workflow.invoke({"query": user_text}, config=config)
+
+        bot_reply = result.get("response", "Sorry, I couldn't process that.")
+        displayed_products = result.get("displayed_products", [])
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # 1. Send main text response
+            text_payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": from_number,
+                "type": "text",
+                "text": {"body": bot_reply}
+            }
+            await client.post(url, json=text_payload, headers=headers)
+
+            # 2. Send Interactive List Drawer with Rich Attributes
+            if displayed_products:
+                rows = []
+                for idx, prod in enumerate(displayed_products[:10]):
+                    prod_id = str(prod.get("id", idx))
+                    title = (prod.get("name") or prod.get("title") or f"Item {idx+1}")[:24]
+
+                    price_val = prod.get("price")
+                    price = f"₹{price_val}" if price_val is not None and str(price_val).strip() != "" else ""
+                    color = prod.get("color") or prod.get("colour") or ""
+                    size = prod.get("size") or ""
+
+                    desc_parts = []
+                    if color:
+                        desc_parts.append(str(color).title())
+                    if size:
+                        desc_parts.append(f"Size: {size}")
+                    if price:
+                        desc_parts.append(price)
+
+                    row_desc = " | ".join(desc_parts) if desc_parts else "In Stock"
+
+                    rows.append({
+                        "id": f"prod_{prod_id}",
+                        "title": title,
+                        "description": row_desc[:72]
+                    })
+
+                list_payload = {
+                    "messaging_product": "whatsapp",
+                    "recipient_type": "individual",
+                    "to": from_number,
+                    "type": "interactive",
+                    "interactive": {
+                        "type": "list",
+                        "header": {"type": "text", "text": "Matching Items"},
+                        "body": {"text": "Tap below to view item details:"},
+                        "footer": {"text": "Shubham Fashion Assistant"},
+                        "action": {
+                            "button": "View Products",
+                            "sections": [{"title": "Search Results", "rows": rows}]
+                        }
+                    }
+                }
+                await client.post(url, json=list_payload, headers=headers)
+
+    except Exception as e:
+        print(f"[Webhook Background Error]: {e}")
+
 
 # Verification Handshake Endpoint (GET)
 @app.get("/webhook/whatsapp")
@@ -85,9 +182,10 @@ async def verify_webhook(request: Request):
         return PlainTextResponse(content=challenge, status_code=200)
     return PlainTextResponse(content="Verification failed", status_code=403)
 
-# Message Listener Endpoint (POST - Async & Rich Interactive UI Optimized)
+
+# Message Listener Endpoint (POST - Instant 200 OK + Async Worker)
 @app.post("/webhook/whatsapp")
-async def whatsapp_webhook(request: Request):
+async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
     data = await request.json()
     try:
         entry = data.get("entry", [])[0]
@@ -100,7 +198,6 @@ async def whatsapp_webhook(request: Request):
             from_number = msg["from"]
             msg_type = msg.get("type", "text")
 
-            # Extract text from user message
             user_text = ""
             if msg_type == "text":
                 user_text = msg.get("text", {}).get("body", "")
@@ -113,111 +210,17 @@ async def whatsapp_webhook(request: Request):
             else:
                 user_text = "Hello"
 
-            if not user_text.strip():
-                return {"status": "ok"}
-
-            print(f"\n[WhatsApp Incoming] From: {from_number} | Message: {user_text}")
-
-            url = f"https://graph.facebook.com/v26.0/{PHONE_NUMBER_ID}/messages"
-            headers = {
-                "Authorization": f"Bearer {ACCESS_TOKEN}",
-                "Content-Type": "application/json"
-            }
-
-            # STRICT FAST-PATH EXIT FOR STANDALONE GREETINGS ONLY (< 200ms)
-            clean_text = "".join(ch for ch in user_text.lower().strip() if ch.isalnum() or ch == " ")
-            GREETING_WORDS = {
-                "hi", "hii", "hiii", "hello", "hey", "helo", "hlo", "hola",
-                "good morning", "good afternoon", "good evening", "goodnight",
-                "gud morning", "gud mrng", "greetings", "namaste", "namaskar"
-            }
-
-            # Only intercept if the query is STRICTLY a standalone greeting string (1-2 words max)
-            # Any query with extra words (e.g., "hi do u have saree") passes directly to LangGraph!
-            is_standalone_greeting = clean_text in GREETING_WORDS
-
-            if is_standalone_greeting:
-                greet_payload = {
-                    "messaging_product": "whatsapp",
-                    "recipient_type": "individual",
-                    "to": from_number,
-                    "type": "text",
-                    "text": {"body": "Hello! Welcome to Shubham Fashion. What apparel or style are you looking for today?"}
-                }
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    await client.post(url, json=greet_payload, headers=headers)
-                return {"status": "ok"}
-
-            # Execute LangGraph workflow for complex queries
-            config = {"configurable": {"thread_id": f"wa_{from_number}"}}
-            result = workflow.invoke({"query": user_text}, config=config)
-            
-            bot_reply = result.get("response", "Sorry, I couldn't process that.")
-            displayed_products = result.get("displayed_products", [])
-
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                # 1. Send main text response
-                text_payload = {
-                    "messaging_product": "whatsapp",
-                    "recipient_type": "individual",
-                    "to": from_number,
-                    "type": "text",
-                    "text": {"body": bot_reply}
-                }
-                await client.post(url, json=text_payload, headers=headers)
-
-                # 2. Send Interactive List Drawer with Rich Attributes (Color, Size, Price)
-                if displayed_products:
-                    rows = []
-                    for idx, prod in enumerate(displayed_products[:10]):
-                        prod_id = str(prod.get("id", idx))
-                        title = (prod.get("name") or prod.get("title") or f"Item {idx+1}")[:24]
-                        
-                        # Extract attributes dynamically
-                        price_val = prod.get("price")
-                        price = f"₹{price_val}" if price_val is not None and str(price_val).strip() != "" else ""
-                        color = prod.get("color") or prod.get("colour") or ""
-                        size = prod.get("size") or ""
-
-                        # Build clean description string within Meta's 72-char limit
-                        desc_parts = []
-                        if color:
-                            desc_parts.append(str(color).title())
-                        if size:
-                            desc_parts.append(f"Size: {size}")
-                        if price:
-                            desc_parts.append(price)
-
-                        row_desc = " | ".join(desc_parts) if desc_parts else "In Stock"
-
-                        rows.append({
-                            "id": f"prod_{prod_id}",
-                            "title": title,
-                            "description": row_desc[:72]
-                        })
-
-                    list_payload = {
-                        "messaging_product": "whatsapp",
-                        "recipient_type": "individual",
-                        "to": from_number,
-                        "type": "interactive",
-                        "interactive": {
-                            "type": "list",
-                            "header": {"type": "text", "text": "Matching Items"},
-                            "body": {"text": "Tap below to view item details:"},
-                            "footer": {"text": "Shubham Fashion Assistant"},
-                            "action": {
-                                "button": "View Products",
-                                "sections": [{"title": "Search Results", "rows": rows}]
-                            }
-                        }
-                    }
-                    await client.post(url, json=list_payload, headers=headers)
+            if user_text.strip():
+                print(f"\n[WhatsApp Incoming] From: {from_number} | Message: {user_text}")
+                # Pass message handling to background worker thread
+                background_tasks.add_task(process_whatsapp_message, user_text, from_number)
 
     except Exception as e:
         print(f"[Webhook Error]: {e}")
 
+    # Return HTTP 200 OK to Meta immediately (< 5ms) to prevent UI delays
     return {"status": "ok"}
+
 
 # 4. Static & Data Directory Mounts
 if (FRONTEND_DIR / "css").exists():
@@ -232,6 +235,7 @@ if DATA_DIR.exists():
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
+
 # 5. HTML Page Handler
 @app.get("/{page_name}")
 async def read_page(page_name: str):
@@ -240,7 +244,7 @@ async def read_page(page_name: str):
 
     if not page_name.endswith(".html"):
         page_name = f"{page_name}.html"
-        
+
     page_file = TEMPLATE_DIR / page_name
     if page_file.exists():
         return FileResponse(str(page_file), headers=NO_CACHE_HEADERS)
