@@ -268,6 +268,7 @@ CCONTEXT & ATTRIBUTES:
 6. Requests for "other products", "different categories", or "what else do u have" MUST set category=None.
 7. Infer `product_name` from history when query refers to "it", "this", "that", or "the product".
 8. SINGLE-TURN FILTERS: `color`, `size`, `price_min`, `price_max`, and `keyword` are strictly single-turn filters. NEVER carry them over from previous turns unless explicitly stated in the user's current message.
+9. ATTRIBUTE INQUIRIES: When the query asks about available colors, sizes, or options for the active category ({active_category}), set `color=None`, `size=None`, `price_min=None`, and `price_max=None` while maintaining `category='{active_category}'`.
 """
     # print("=" * 80)
     # print("SYSTEM PROMPT")
