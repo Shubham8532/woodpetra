@@ -653,8 +653,8 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     # Retrieve current products in memory
     products = state.get("products") or []
     similar_products = state.get("similar_products") or []
-    # --- CLEAN STATE LEAK FIX ---
-    # Agar current turn checkout nahi hai, toh payment_url aur stale selection ko clear rakho
+
+    # Clean State Leak Fix: Clear payment_url on non-checkout turns
     if intent_str == "checkout":
         payment_url = state.get("payment_url")
     else:
@@ -675,10 +675,7 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     else:
         eval_products = products[:5]
 
-    # OLD (Stuck on old selected item):
-    # selected_product = state.get("selected_product") or (products[0] if products else None)
-
-    # NEW (Always updates selected_product to the top result of the current search):
+    # Always update selected_product to the top result of the current search
     selected_product = products[0] if products else None
 
     # 1. SPECIAL CHECKOUT RESPONSE HANDLER
@@ -694,40 +691,33 @@ def generate_response(state: ShoppingState) -> ShoppingState:
 
         return {
             "response": response_text,
-            "displayed_products": [selected_product] if selected_product else products[:1],
+            "displayed_products": [],  # Clean UI: Hide duplicate cards on checkout
             "similar_products": [],
             "products": products,
             "payment_url": payment_url,
             "selected_product": selected_product
         }
+
     # 2. STANDARD SHOPPING / CONTEXT RESPONSE HANDLER
-    # 1. Decide what to display in UI cards for THIS specific turn
-    # If the user is just saying hi/hello, don't show UI cards on screen, but keep products in memory!
     if intent_type in ["greeting", "general", "out_of_scope"]:
         api_displayed_products = []
         api_similar_products = []
     else:
-        # 1. Full data payload for Frontend / Popups / API response
         api_displayed_products = products
         api_similar_products = similar_products[:5]
 
-    # --- ALL PRODUCTS INCLUDED (2-ITEM LIMIT REMOVED) ---
+    # Optimized Prompt Products Array (Saves tokens & prevents history picking)
     prompt_products = []
-    for p in eval_products[:5]:   # Capped at 5 ...
-        desc = p.get("description") or ""
-        short_desc = (desc[:60] + "...") if len(desc) > 60 else desc
-
+    for p in eval_products:
         prompt_products.append({
             "category": p.get("category"),
             "name": p.get("name"),
             "price": f"₹{p.get('price')}",
             "color": p.get("color"),
-            "size": p.get("size"),
-            "details": short_desc,
-            "url": p.get("product_url")
+            "size": p.get("size")
         })
 
-    # Global Metadata Summaries (Loops across ALL products in memory for 100% attribute accuracy)
+    # Global Metadata Summaries across active search products
     distinct_categories = sorted(list(set(str(p.get("category")) for p in products if p.get("category"))))
     categories_str = ", ".join(distinct_categories) if distinct_categories else "our collection"
 
@@ -745,9 +735,9 @@ Stock Sizes: {sizes_summary}
 Top Products: {prompt_products if prompt_products else "None"}
 
 INSTRUCTIONS:
-- Answer directly using the context above in 2-3 concise, friendly sentences.
-- If query is strictly about COLORS, state ONLY {colors_summary}. Do not list sizes.
-- If query is strictly about SIZES, state ONLY {sizes_summary}. Do not list colors.
+- Answer directly using the context above in 2-3 concise, friendly Hinglish sentences.
+- If query is strictly about COLORS, state ONLY the colors listed in Stock Colors ({colors_summary}) for the current active category. Do not list sizes or reference old topics.
+- If query is strictly about SIZES, state ONLY the sizes listed in Stock Sizes ({sizes_summary}). Do not list colors or reference old topics.
 - If asking for the cheapest/lowest price item, quote the VERY FIRST product from Top Products (index 0)."""
 
     response = invoke_with_fallback(
@@ -759,11 +749,11 @@ INSTRUCTIONS:
 
     return {
         "response": response.content,
-        "displayed_products": api_displayed_products, # Sent to FastAPI for primary cards
-        "similar_products": api_similar_products,     # Sent to FastAPI for "You might also like"
+        "displayed_products": api_displayed_products,
+        "similar_products": api_similar_products,
         "products": products,  
         "payment_url": payment_url,
-        "selected_product": selected_product                        # Keeps primary products in LangGraph state
+        "selected_product": selected_product
     }
 
 
