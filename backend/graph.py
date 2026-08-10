@@ -660,13 +660,20 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     else:
         payment_url = None
     
-    # Dynamic Array Sorting Safeguard (Applies to ALL products before slicing)
-    sort_val = str(getattr(raw_intent, 'sort', '') or '').lower()
+    # Dynamic Array Sorting & Context Isolation
+    sort_val = str(getattr(raw_intent, 'sort', '') or getattr(raw_intent, 'sorting_preference', '') or '').lower()
     raw_query = state.get("query", "").lower()
-    if ("price_asc" in sort_val or "asc" in sort_val or "cheap" in raw_query or "lowest" in raw_query) and products:
+    
+    is_cheapest = "price_asc" in sort_val or "asc" in sort_val or "cheap" in raw_query or "lowest" in raw_query or "sasta" in raw_query
+
+    if is_cheapest and products:
         products = sorted(products, key=lambda x: float(x.get("price", float("inf"))))
-    elif ("price_desc" in sort_val or "desc" in sort_val or "expensive" in raw_query or "highest" in raw_query) and products:
+        eval_products = products[:1]  # Restrict LLM context strictly to index 0
+    elif ("price_desc" in sort_val or "desc" in sort_val or "expensive" in raw_query) and products:
         products = sorted(products, key=lambda x: float(x.get("price", 0)), reverse=True)
+        eval_products = products[:5]
+    else:
+        eval_products = products[:5]
 
     # OLD (Stuck on old selected item):
     # selected_product = state.get("selected_product") or (products[0] if products else None)
@@ -706,7 +713,7 @@ def generate_response(state: ShoppingState) -> ShoppingState:
 
     # --- ALL PRODUCTS INCLUDED (2-ITEM LIMIT REMOVED) ---
     prompt_products = []
-    for p in products[:5]:   # Capped at 5 ...
+    for p in eval_products[:5]:   # Capped at 5 ...
         desc = p.get("description") or ""
         short_desc = (desc[:60] + "...") if len(desc) > 60 else desc
 
