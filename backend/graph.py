@@ -313,14 +313,14 @@ MAPPING & INFERENCE:
 
 CONTEXT & ATTRIBUTES:
 1. Attribute queries ("Sizes?", "Colors?", "Price?", "Options?") MUST be intent='search'.
-2. CATEGORY PERSISTENCE: Maintain previous category ({active_category}) ONLY IF the query continues discussing the same apparel. IF the user asks about new/unsupported items (e.g., saree, lehenga, kurti, shoes, watches), u MUST reset `category=None`.
+2. CATEGORY PERSISTENCE: Maintain previous category ({active_category}) ONLY IF the query continues discussing the same apparel. IF the user asks about new/unsupported items, u MUST reset `category=None`.
 3. Greetings ("Hi", "Hello") with active category ({active_category}) MUST set intent='search' and category='{active_category}'.
 4. General queries ("which colors available", "show more") MUST NOT set `product_name`.
 5. Reset `price_max` to null unless budget is explicitly requested in current query.
 6. Requests for "other products", "different categories", unlisted items, or "what else do u have" MUST set category=None.
 7. Infer `product_name` from history when query refers to "it", "this", "that", or "the product".
-8. SINGLE-TURN FILTERS: `color`, `size`, `price_min`, `price_max`, and `keyword` are strictly single-turn filters. NEVER carry them over from previous turns unless explicitly stated in the user's current message.
-9. ATTRIBUTE INQUIRIES: When the query asks about available colors, sizes, or options for the active category ({active_category}), set `color=None`, `size=None`, `price_min=None`, and `price_max=None` while maintaining `category='{active_category}'`.
+8. SINGLE-TURN FILTERS: `color`, `size`, `price_min`, `price_max`, and `keyword` are strictly single-turn filters. NEVER carry them over from previous turns unless explicitly stated in current message.
+9. ATTRIBUTE INQUIRIES: When the query asks about available colors, sizes, or options for active category ({active_category}), set `color=None`, `size=None`, `price_min=None`, and `price_max=None` while maintaining `category='{active_category}'`.
 """
     # print("=" * 80)
     # print("SYSTEM PROMPT")
@@ -364,10 +364,10 @@ CONTEXT & ATTRIBUTES:
     # )
 
     result = invoke_with_fallback(
-    [
-        ("system", system_prompt),
-        ("human", query)
-    ],
+        [
+            ("system", system_prompt),
+            ("human", query)
+        ],
     schema=ShoppingIntentModel
     )
 
@@ -442,28 +442,28 @@ def search_product(state: ShoppingState) -> ShoppingState:
     intent = state['intent']
     raw_query = state.get('query', '').lower()
 
-    # STEP 0: KEYWORD TO CATEGORY NORMALIZATION
-    # Converts plural/synonym keywords ("tshirts", "tees", "pants") to exact DB categories if category is missing
-    if not intent.category and intent.keyword:
-        kw_clean = intent.keyword.lower().replace("tshirts", "t-shirt").replace("tshirt", "t-shirt").rstrip('s')
-        cat_map = {
-            "t-shirt": "T-Shirt", "tee": "T-Shirt",
-            "shirt": "Shirt",
-            "hoodie": "Hoodie", "sweatshirt": "Hoodie",
-            "jean": "Jeans", "denim": "Jeans",
-            "jogger": "Joggers", "pant": "Joggers", "trouser": "Joggers",
-            "short": "Shorts",
-            "jacket": "Jacket",
-            "shoe": "Shoes", "sneaker": "Shoes",
-            "cap": "Cap", "hat": "Cap"
-        }
-        for k, v in cat_map.items():
-            if k in kw_clean:
-                intent.category = v
-                break
+    # # STEP 0: KEYWORD TO CATEGORY NORMALIZATION
+    # # Converts plural/synonym keywords ("tshirts", "tees", "pants") to exact DB categories if category is missing
+    # if not intent.category and intent.keyword:
+    #     kw_clean = intent.keyword.lower().replace("tshirts", "t-shirt").replace("tshirt", "t-shirt").rstrip('s')
+    #     cat_map = {
+    #         "t-shirt": "T-Shirt", "tee": "T-Shirt",
+    #         "shirt": "Shirt",
+    #         "hoodie": "Hoodie", "sweatshirt": "Hoodie",
+    #         "jean": "Jeans", "denim": "Jeans",
+    #         "jogger": "Joggers", "pant": "Joggers", "trouser": "Joggers",
+    #         "short": "Shorts",
+    #         "jacket": "Jacket",
+    #         "shoe": "Shoes", "sneaker": "Shoes",
+    #         "cap": "Cap", "hat": "Cap"
+    #     }
+    #     for k, v in cat_map.items():
+    #         if k in kw_clean:
+    #             intent.category = v
+    #             break
 
-    # STEP 1: SAFETY CHECK
-    # Check if ANY usable search filter was extracted from the user's query.
+    # # STEP 1: SAFETY CHECK
+    # # Check if ANY usable search filter was extracted from the user's query.
     has_filter = any([
         intent.product_name,
         intent.category,
@@ -527,18 +527,13 @@ def search_product(state: ShoppingState) -> ShoppingState:
             if intent.category:
                 alt_query = alt_query.eq("category", intent.category)
             elif intent.keyword:
-                clean_kw = intent.keyword.lower().replace("tshirts", "t-shirt").replace("tshirt", "t-shirt").rstrip('s')
-                alt_query = alt_query.or_(f"name.ilike.%{clean_kw}%,description.ilike.%{clean_kw}%,category.ilike.%{clean_kw}%")
+                alt_query = alt_query.or_(f"name.ilike.%{intent.keyword}%,description.ilike.%{intent.keyword}%,category.ilike.%{intent.keyword}%")
 
             if intent.color:
                 alt_query = alt_query.ilike("color", intent.color.capitalize())
 
             if intent.size:
-                size_val = (
-                    intent.size.value
-                    if hasattr(intent.size, "value")
-                    else intent.size
-                )
+                size_val = intent.size.value if hasattr(intent.size, "value") else intent.size
                 alt_query = alt_query.eq("size", size_val)
 
             products = alt_query.execute().data
@@ -548,14 +543,14 @@ def search_product(state: ShoppingState) -> ShoppingState:
     else:
         query = supabase.table("products").select("*")
 
-        clean_kw = ""
-        if intent.keyword:
-            clean_kw = intent.keyword.lower().replace("tshirts", "t-shirt").replace("tshirt", "t-shirt").rstrip('s')
+        # clean_kw = ""
+        # if intent.keyword:
+        #     clean_kw = intent.keyword.lower().replace("tshirts", "t-shirt").replace("tshirt", "t-shirt").rstrip('s')
 
         if intent.category:
             query = query.eq("category", intent.category)
         elif intent.keyword:
-            query = query.or_(f"name.ilike.%{clean_kw}%,description.ilike.%{clean_kw}%,category.ilike.%{clean_kw}%")
+            query = query.or_(f"name.ilike.%{intent.keyword}%,description.ilike.%{intent.keyword}%,category.ilike.%{intent.keyword}%")
 
         if intent.color:
             query = query.ilike("color", intent.color.capitalize())
@@ -572,7 +567,7 @@ def search_product(state: ShoppingState) -> ShoppingState:
 
         query = query.order("price", desc=False)
         products = query.execute().data
-
+##############################
         # --- FALLBACK 1: STRICT CATEGORY PRESERVATION ---
         # If requested color/size/budget yielded 0 items, keep category STRICT!
         # Fetch ALL items in that category so user sees alternative colors/sizes (e.g., non-orange T-Shirts)
@@ -631,13 +626,16 @@ def search_product(state: ShoppingState) -> ShoppingState:
             products = balanced_products if balanced_products else supabase.table("products").select("*").order("price", desc=False).limit(15).execute().data
 
     # DYNAMIC SORTING HANDLER
-    sort_val = str(getattr(intent, 'sort', '') or '').lower()
+    sort_pref = getattr(intent, 'sorting_preference', None) or getattr(intent, 'sort', None)
+    sort_val = str(sort_pref if sort_pref else '').lower()
+
     if ("price_desc" in sort_val or "desc" in sort_val) and products:
         products.sort(key=lambda x: float(x.get("price", 0)), reverse=True)
     elif products:
         # Default: ALWAYS sort price ascending so index 0 is guaranteed to be the lowest priced item!
         products.sort(key=lambda x: float(x.get("price", float("inf"))))
 
+    # SIMILAR PRODUCTS / RECOMMENDATION
     similar_products = []
     category_to_recommend = intent.category
 
@@ -719,13 +717,13 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     else:
         payment_url = None
     
-    # Dynamic Array Sorting & Context Isolation
-    sort_val = str(getattr(raw_intent, 'sort', '') or getattr(raw_intent, 'sorting_preference', '') or '').lower()
-    raw_query = state.get("query", "").lower()
+    # Dynamic Array Sorting via Pydantic Enums (No manual language string matching)
+    sort_val = str(getattr(raw_intent, 'sorting_preference', '') or getattr(raw_intent, 'sort', '') or '').lower()
     
-    is_cheapest = "price_asc" in sort_val or "asc" in sort_val or "cheap" in raw_query or "lowest" in raw_query or "sasta" in raw_query
+    is_cheapest = "price_asc" in sort_val or "asc" in sort_val
+    is_expensive = "price_desc" in sort_val or "desc" in sort_val
 
-    # SAFE CATEGORY LOCK: Preserve category filter from intent if present to prevent cross-category jumps
+    # SAFE CATEGORY LOCK: Preserve category filter from intent if present
     active_cat = getattr(raw_intent, "category", None) if hasattr(raw_intent, "category") else None
     if active_cat and products:
         filtered_by_cat = [p for p in products if str(p.get("category", "")).lower() == str(active_cat).lower()]
@@ -734,15 +732,15 @@ def generate_response(state: ShoppingState) -> ShoppingState:
 
     if is_cheapest and products:
         products = sorted(products, key=lambda x: float(x.get("price", float("inf"))))
-        eval_products = products[:1]  # Restrict LLM context strictly to index 0
-    elif ("price_desc" in sort_val or "desc" in sort_val or "expensive" in raw_query) and products:
+        eval_products = products[:1]
+    elif is_expensive and products:
         products = sorted(products, key=lambda x: float(x.get("price", 0)), reverse=True)
         eval_products = products[:5]
     else:
         eval_products = products[:5]
 
-    # Always update selected_product to the top result of the current search
-    selected_product = products[0] if products else None
+    # Preserve selected_product across turns so multi-turn checkout never breaks
+    selected_product = (products[0] if products else None) or state.get("selected_product")
 
     # 1. SPECIAL CHECKOUT RESPONSE HANDLER
     if intent_str == "checkout" and payment_url:
@@ -765,16 +763,19 @@ def generate_response(state: ShoppingState) -> ShoppingState:
         }
 
     # 2. STANDARD SHOPPING / CONTEXT RESPONSE HANDLER
-    if intent_type in ["greeting", "general", "out_of_scope"]:
+    # Isolate LLM prompt context & UI cards on non-shopping turns
+    if intent_type in ["greeting", "general", "out_of_scope"] or intent_str in ["greeting", "general", "out_of_scope"]:
         api_displayed_products = []
         api_similar_products = []
+        prompt_eval_products = []  # Prevents passing old search products to prompt on "samosa" / "hi" queries
     else:
         api_displayed_products = products
         api_similar_products = similar_products[:5]
+        prompt_eval_products = eval_products
 
     # Optimized Prompt Products Array (Saves tokens & prevents history picking)
     prompt_products = []
-    for p in eval_products:
+    for p in prompt_eval_products:
         prompt_products.append({
             "category": p.get("category"),
             "name": p.get("name"),
@@ -783,15 +784,20 @@ def generate_response(state: ShoppingState) -> ShoppingState:
             "size": p.get("size")
         })
 
-    # Global Metadata Summaries across active search products
-    distinct_categories = sorted(list(set(str(p.get("category")) for p in products if p.get("category"))))
-    categories_str = ", ".join(distinct_categories) if distinct_categories else "our collection"
+    # Global Metadata Summaries
+    if prompt_eval_products:
+        distinct_categories = sorted(list(set(str(p.get("category")) for p in products if p.get("category"))))
+        categories_str = ", ".join(distinct_categories) if distinct_categories else "our collection"
 
-    distinct_colors = sorted(list(set(p.get("color").title() for p in products if p.get("color"))))
-    colors_summary = ", ".join(distinct_colors) if distinct_colors else "Various colors available"
+        distinct_colors = sorted(list(set(p.get("color").title() for p in products if p.get("color"))))
+        colors_summary = ", ".join(distinct_colors) if distinct_colors else "Various colors available"
 
-    distinct_sizes = sorted(list(set(str(p.get("size")) for p in products if p.get("size"))))
-    sizes_summary = ", ".join(distinct_sizes) if distinct_sizes else "Various sizes available"
+        distinct_sizes = sorted(list(set(str(p.get("size")) for p in products if p.get("size"))))
+        sizes_summary = ", ".join(distinct_sizes) if distinct_sizes else "Various sizes available"
+    else:
+        categories_str = "our collection"
+        colors_summary = "None"
+        sizes_summary = "None"
 
     prompt = f"""Query: {state["query"]}
 Intent: {intent_str}
@@ -802,9 +808,10 @@ Top Products: {prompt_products if prompt_products else "None"}
 
 INSTRUCTIONS:
 - Answer directly using the context above in 2-3 concise, friendly Hinglish sentences.
+- If query is non-shopping (general/greeting/unsupported items), answer directly and politely. Do NOT mention products or prices when Top Products is None.
 - If query is strictly about COLORS, state ONLY the colors listed in Stock Colors ({colors_summary}) for the current active category. Do not list sizes or reference old topics.
 - If query is strictly about SIZES, state ONLY the sizes listed in Stock Sizes ({sizes_summary}). Do not list colors or reference old topics.
-- If asking for the cheapest/lowest price item, quote ONLY the product listed in Top Products (index 0). Do NOT reference items from other categories (e.g., do not switch from shorts to hoodies)."""
+- If asking for the cheapest/lowest price item, quote ONLY the product listed in Top Products (index 0)."""
 
     response = invoke_with_fallback(
         [
@@ -817,9 +824,9 @@ INSTRUCTIONS:
         "response": response.content,
         "displayed_products": api_displayed_products,
         "similar_products": api_similar_products,
-        "products": products,  
+        "products": products,  # Preserved in state checkpointer for multi-turn intent!
         "payment_url": payment_url,
-        "selected_product": selected_product
+        "selected_product": selected_product  # Preserved in state checkpointer for multi-turn intent!
     }
 
 
@@ -982,7 +989,7 @@ graph = StateGraph(ShoppingState)
 graph.add_node("router", router)
 graph.add_node("general_chat", general_chat)
 graph.add_node("extract_intent", extract_intent)
-graph.add_node("context_decision", context_decision)
+graph.add_node("context_decision", context_decision)F
 graph.add_node("search_products", search_product)
 graph.add_node("create_checkout_session", create_checkout_session)
 graph.add_node("generate_response", generate_response)
