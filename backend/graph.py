@@ -700,17 +700,20 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     products = state.get("products") or []
     similar_products = state.get("similar_products") or []
 
+    # Safe extraction of intent string from state
     raw_intent = state.get("intent")
     if hasattr(raw_intent, "intent"):
         intent_val = getattr(raw_intent.intent, "value", raw_intent.intent)
     else:
         intent_val = getattr(raw_intent, "value", raw_intent)
-    intent_str = str(intent_val).lower()
+    intent_str = str(intent_val if intent_val is not None else "").lower()
 
+    # Safe extraction of route string from state
     route_raw = state.get("route")
-    route_str = str(getattr(route_raw, "value", route_raw)).lower()
+    route_val = str(getattr(route_raw, "value", route_raw) if route_raw is not None else "").lower()
 
-    is_general = intent_str in ["general", "greeting", "out_of_scope"] or route_str in ["general", "general_chat"]
+    # General turn check
+    is_general = intent_str in ["general", "greeting", "out_of_scope"] or route_val in ["general", "general_chat"]
 
     # 2. PAYMENT URL CHECK
     payment_url = state.get("payment_url") if intent_str == "checkout" else None
