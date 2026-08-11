@@ -43,7 +43,8 @@ INTENT_PROMPT = """You are an AI shopping intent extractor. Your sole job is to 
 ### CATEGORY VS KEYWORD VS PRODUCT NAME RULE
 - Specific Model/Product Brand Name (e.g., "SummerLite", "CloudWarm", "BeachFlex") -> set `product_name` = Exact String (e.g. "SummerLite Shorts").
 - Allowed Category Match -> set `category` = Exact String (e.g. "Shorts").
-- Unlisted Term / Out-of-Catalog (e.g., non-clothing items, food) -> set `category` = null. Extract term into `keyword`. If query is completely non-apparel, set `intent` = "general".
+- Unlisted Apparel / Out-of-Catalog Clothing (e.g., "sarees", "lehenga", "suit", "kurti", "dress") -> set `intent` = "search", `category` = null, extract term into `keyword` (e.g., "sarees"). NEVER set intent = "general" for clothing or fashion items!
+- Non-Apparel / Food Requests (e.g., "samosa", "pizza", "electronics") -> set `intent` = "general", `category` = null, extract term into `keyword`.
 
 ### DYNAMIC CONTEXT & ENTITY RESET RULES (STRICT ORDER)
 1. PRIMARY EXTRACTION: Extract `color`, `size`, `product_name`, `price_min`, and `price_max` directly from Current User Query.
