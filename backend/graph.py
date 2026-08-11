@@ -989,7 +989,7 @@ graph = StateGraph(ShoppingState)
 graph.add_node("router", router)
 graph.add_node("general_chat", general_chat)
 graph.add_node("extract_intent", extract_intent)
-graph.add_node("context_decision", context_decision)F
+graph.add_node("context_decision", context_decision)
 graph.add_node("search_products", search_product)
 graph.add_node("create_checkout_session", create_checkout_session)
 graph.add_node("generate_response", generate_response)
