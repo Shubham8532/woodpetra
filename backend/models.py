@@ -15,10 +15,12 @@ class ContextRoute(str, Enum):
 
 class IntentType(str, Enum):
     SEARCH = "search"
-    COMPARE = "compare"
-    DETAILS = "details"
     RECOMMEND = "recommend"
+    DETAILS = "details"
     CHECKOUT = "checkout"
+    GREETING = "greeting"
+    GENERAL = "general"
+    COMPARE = "compare"
 
 
 class SizeOption(str, Enum):

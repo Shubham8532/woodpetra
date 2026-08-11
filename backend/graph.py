@@ -527,7 +527,8 @@ def search_product(state: ShoppingState) -> ShoppingState:
             if intent.category:
                 alt_query = alt_query.eq("category", intent.category)
             elif intent.keyword:
-                alt_query = alt_query.or_(f"name.ilike.%{intent.keyword}%,description.ilike.%{intent.keyword}%,category.ilike.%{intent.keyword}%")
+                kw_term = intent.keyword or ""
+                alt_query = alt_query.or_(f"name.ilike.%{kw_term}%,description.ilike.%{kw_term}%,category.ilike.%{kw_term}%")
 
             if intent.color:
                 alt_query = alt_query.ilike("color", intent.color.capitalize())
@@ -542,15 +543,12 @@ def search_product(state: ShoppingState) -> ShoppingState:
     # Used when user asks for general items like: "Show me black hoodies under 1500"
     else:
         query = supabase.table("products").select("*")
-
-        # clean_kw = ""
-        # if intent.keyword:
-        #     clean_kw = intent.keyword.lower().replace("tshirts", "t-shirt").replace("tshirt", "t-shirt").rstrip('s')
+        kw_term = intent.keyword or ""
 
         if intent.category:
             query = query.eq("category", intent.category)
         elif intent.keyword:
-            query = query.or_(f"name.ilike.%{intent.keyword}%,description.ilike.%{intent.keyword}%,category.ilike.%{intent.keyword}%")
+            query = query.or_(f"name.ilike.%{kw_term}%,description.ilike.%{kw_term}%,category.ilike.%{kw_term}%")
 
         if intent.color:
             query = query.ilike("color", intent.color.capitalize())
@@ -634,6 +632,15 @@ def search_product(state: ShoppingState) -> ShoppingState:
     elif products:
         # Default: ALWAYS sort price ascending so index 0 is guaranteed to be the lowest priced item!
         products.sort(key=lambda x: float(x.get("price", float("inf"))))
+
+    # DYNAMIC MATCH PINNING: If query contains explicit product name/keyword, pin matching item to index 0
+    search_term = (intent.product_name or intent.keyword or "").lower().strip()
+    if search_term and products:
+        matching_prods = [p for p in products if search_term in str(p.get("name", "")).lower()]
+        if matching_prods:
+            exact_match = matching_prods[0]
+            products = [exact_match] + [p for p in products if str(p.get("sku", p.get("id"))) != str(exact_match.get("sku", exact_match.get("id")))]
+
 
     # SIMILAR PRODUCTS / RECOMMENDATION
     similar_products = []
@@ -731,16 +738,17 @@ def generate_response(state: ShoppingState) -> ShoppingState:
             products = filtered_by_cat
 
     if is_cheapest and products:
-        products = sorted(products, key=lambda x: float(x.get("price", float("inf"))))
-        eval_products = products[:1]
+        eval_products = sorted(products, key=lambda x: float(x.get("price", float("inf"))))[:1]
     elif is_expensive and products:
-        products = sorted(products, key=lambda x: float(x.get("price", 0)), reverse=True)
-        eval_products = products[:5]
+        eval_products = sorted(products, key=lambda x: float(x.get("price", 0)), reverse=True)[:5]
     else:
         eval_products = products[:5]
 
-    # Preserve selected_product across turns so multi-turn checkout never breaks
-    selected_product = (products[0] if products else None) or state.get("selected_product")
+    # CHECKOUT PRIORITY FIX: On checkout, respect state's active selected_product first!
+    if intent_str == "checkout":
+        selected_product = state.get("selected_product") or (products[0] if products else None)
+    else:
+        selected_product = (products[0] if products else None) or state.get("selected_product")
 
     # 1. SPECIAL CHECKOUT RESPONSE HANDLER
     if intent_str == "checkout" and payment_url:
@@ -828,7 +836,6 @@ INSTRUCTIONS:
         "payment_url": payment_url,
         "selected_product": selected_product  # Preserved in state checkpointer for multi-turn intent!
     }
-
 
 def get_table_primary_key(table_name: str = "products") -> str:
     """Inspects table schema directly via Supabase API to find the primary key column."""
