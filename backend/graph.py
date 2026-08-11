@@ -700,13 +700,17 @@ def generate_response(state: ShoppingState) -> ShoppingState:
 
     # Safely extract intent string whether raw_intent is a Pydantic object or raw string
     if hasattr(raw_intent, "intent"):
-        intent_type = raw_intent.intent
+        intent_val = getattr(raw_intent.intent, "value", raw_intent.intent)
     else:
-        intent_type = str(raw_intent)
+        intent_val = getattr(raw_intent, "value", raw_intent)
+    intent_str = str(intent_val).lower()
 
-    # Convert IntentType enum to string if needed for razorpay
-    intent_str = str(intent_type.value if hasattr(intent_type, "value") else intent_type).lower()
+    route_raw = state.get("route")
+    route_str = str(getattr(route_raw, "value", route_raw)).lower()
 
+    # Flag for non-shopping / general queries
+    is_general = intent_str in ["general", "greeting", "out_of_scope"] or route_str in ["general", "general_chat"]
+    
     # Retrieve current products in memory
     products = state.get("products") or []
     similar_products = state.get("similar_products") or []
@@ -737,7 +741,6 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     else:
         eval_products = products[:5]
 
-    # RESTORE 6 AUG PRECEDENCE: State's active selected_product ALWAYS takes priority over array default!
     selected_product = state.get("selected_product") or (products[0] if products else None)
 
     # 1. SPECIAL CHECKOUT RESPONSE HANDLER

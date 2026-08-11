@@ -1,3 +1,7 @@
+import sys
+# Ensure models module is registered for LangGraph Checkpointer
+sys.modules['backend.models'] = sys.modules[__name__]
+
 from typing import List, Optional, TypedDict
 from enum import Enum
 from pydantic import BaseModel, Field, field_validator
