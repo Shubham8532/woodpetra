@@ -696,9 +696,11 @@ def search_product(state: ShoppingState) -> ShoppingState:
 def generate_response(state: ShoppingState) -> ShoppingState:
     """Convert structured product data into a natural language reply."""
 
-    raw_intent = state.get("intent")
+    # 1. RETRIEVE PRODUCTS & INTENT DATA FIRST
+    products = state.get("products") or []
+    similar_products = state.get("similar_products") or []
 
-    # Safely extract intent string whether raw_intent is a Pydantic object or raw string
+    raw_intent = state.get("intent")
     if hasattr(raw_intent, "intent"):
         intent_val = getattr(raw_intent.intent, "value", raw_intent.intent)
     else:
@@ -708,26 +710,16 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     route_raw = state.get("route")
     route_str = str(getattr(route_raw, "value", route_raw)).lower()
 
-    # Flag for non-shopping / general queries
     is_general = intent_str in ["general", "greeting", "out_of_scope"] or route_str in ["general", "general_chat"]
-    
-    # Retrieve current products in memory
-    products = state.get("products") or []
-    similar_products = state.get("similar_products") or []
 
-    # Clean State Leak Fix: Clear payment_url on non-checkout turns
-    if intent_str == "checkout":
-        payment_url = state.get("payment_url")
-    else:
-        payment_url = None
-    
-    # Dynamic Array Sorting via Pydantic Enums (No manual language string matching)
+    # 2. PAYMENT URL CHECK
+    payment_url = state.get("payment_url") if intent_str == "checkout" else None
+
+    # 3. DYNAMIC ARRAY SORTING
     sort_val = str(getattr(raw_intent, 'sorting_preference', '') or getattr(raw_intent, 'sort', '') or '').lower()
-    
     is_cheapest = "price_asc" in sort_val or "asc" in sort_val
     is_expensive = "price_desc" in sort_val or "desc" in sort_val
 
-    # SAFE CATEGORY LOCK: Preserve category filter from intent if present
     active_cat = getattr(raw_intent, "category", None) if hasattr(raw_intent, "category") else None
     if active_cat and products:
         filtered_by_cat = [p for p in products if str(p.get("category", "")).lower() == str(active_cat).lower()]
@@ -743,7 +735,7 @@ def generate_response(state: ShoppingState) -> ShoppingState:
 
     selected_product = state.get("selected_product") or (products[0] if products else None)
 
-    # 1. SPECIAL CHECKOUT RESPONSE HANDLER
+    # 4. CHECKOUT RESPONSE BRANCH
     if intent_str == "checkout" and payment_url:
         item_name = selected_product.get("name", "your selected item") if selected_product else "your selected item"
         price = selected_product.get("price", "") if selected_product else ""
@@ -763,21 +755,16 @@ def generate_response(state: ShoppingState) -> ShoppingState:
             "selected_product": selected_product
         }
 
-    # 2. STANDARD SHOPPING / CONTEXT RESPONSE HANDLER
-    # Isolate LLM prompt context & UI cards on non-shopping turns
-    route_val = str(getattr(state.get("route"), "value", state.get("route")) or "").lower()
-    is_general = intent_type in ["greeting", "general", "out_of_scope"] or intent_str in ["greeting", "general", "out_of_scope"] or route_val in ["general", "general_chat"]
-
+    # 5. GENERAL VS SHOPPING CONTEXT EVALUATION
     if is_general:
         api_displayed_products = []
         api_similar_products = []
-        prompt_eval_products = []  # Prevents passing old search products to prompt on "samosa" / "hi" queries
+        prompt_eval_products = eval_products[:3] if eval_products else []
     else:
         api_displayed_products = products
         api_similar_products = similar_products[:5]
         prompt_eval_products = eval_products
 
-    # Optimized Prompt Products Array
     prompt_products = []
     for p in prompt_eval_products:
         prompt_products.append({
@@ -788,7 +775,7 @@ def generate_response(state: ShoppingState) -> ShoppingState:
             "size": p.get("size")
         })
 
-    # Global Metadata Summaries
+    # METADATA SUMMARIES
     if prompt_eval_products:
         distinct_categories = sorted(list(set(str(p.get("category")) for p in products if p.get("category"))))
         categories_str = ", ".join(distinct_categories) if distinct_categories else "our collection"
@@ -812,10 +799,9 @@ Top Products: {prompt_products if prompt_products else "None"}
 
 INSTRUCTIONS:
 - Answer directly using the context above in 2-3 concise, friendly Hinglish sentences.
-- If query is non-shopping (general/greeting/unsupported items), answer directly and politely. Do NOT mention products or prices when Top Products is None.
-- If query is strictly about COLORS, state ONLY the colors listed in Stock Colors ({colors_summary}) for the current active category. Do not list sizes or reference old topics.
-- If query is strictly about SIZES, state ONLY the sizes listed in Stock Sizes ({sizes_summary}). Do not list colors or reference old topics.
-- If asking for the cheapest/lowest price item, quote ONLY the product listed in Top Products (index 0)."""
+- If query is non-shopping (general/greeting/unsupported items), state clearly that we don't carry that item, mention our store apparel categories, and optionally recommend top alternatives from Top Products.
+- If query is strictly about COLORS, state ONLY the colors listed in Stock Colors ({colors_summary}).
+- If query is strictly about SIZES, state ONLY the sizes listed in Stock Sizes ({sizes_summary})."""
 
     response = invoke_with_fallback(
         [
@@ -832,6 +818,7 @@ INSTRUCTIONS:
         "payment_url": payment_url,
         "selected_product": selected_product
     }
+
 def get_table_primary_key(table_name: str = "products") -> str:
     """Inspects table schema directly via Supabase API to find the primary key column."""
     try:
