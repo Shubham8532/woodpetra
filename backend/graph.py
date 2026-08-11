@@ -218,9 +218,11 @@ Current User Query:
 
     return {
         "response": response.content,
-        "products": state.get("products", []),
+        # "products": state.get("products", []),
+        "products": [],
         "displayed_products": [],
-        "similar_products": []
+        "similar_products": [],
+        "selected_product": state.get("selected_product") # Memory intact for Turn 4 checkout!
     }
 
 
@@ -291,7 +293,8 @@ def extract_intent(
     """
 
     history = load_history(config)
-    history_text, active_category = build_conversation(history, max_turns=3)
+    # Increased max_turns to 8 so product context survives 3-4 intervening queries
+    history_text, active_category = build_conversation(history, max_turns=8)
 
     query = state['query']
 
@@ -300,7 +303,7 @@ def extract_intent(
 
     system_prompt = INTENT_PROMPT + f"""
 Active Category: {active_category if active_category else "None"}
-History (Last 5 turns):
+History (Last 8 turns):
 {history_text}
 
 MAPPING & INFERENCE:
@@ -313,12 +316,12 @@ MAPPING & INFERENCE:
 
 CONTEXT & ATTRIBUTES:
 1. Attribute queries ("Sizes?", "Colors?", "Price?", "Options?") MUST be intent='search'.
-2. CATEGORY PERSISTENCE: Maintain previous category ({active_category}) ONLY IF the query continues discussing the same apparel. IF the user asks about new/unsupported items, u MUST reset `category=None`.
+2. CATEGORY PERSISTENCE: Maintain previous category ({active_category}) if no new catalog category is explicitly mentioned in current query.
 3. Greetings ("Hi", "Hello") with active category ({active_category}) MUST set intent='search' and category='{active_category}'.
 4. General queries ("which colors available", "show more") MUST NOT set `product_name`.
-5. Reset `price_max` to null unless budget is explicitly requested in current query.
-6. Requests for "other products", "different categories", unlisted items, or "what else do u have" MUST set category=None.
-7. Infer `product_name` from history when query refers to "it", "this", "that", or "the product".
+5. Reset `price_max` to null unless budget is explicitly requested in current message.
+6. Requests for "other products", "different categories", or "what else do u have" MUST set category=None.
+7. Infer `product_name` from history when query refers to "it", "this", "that", "the product", or buying expressions ("buy it", "khareedna hai").
 8. SINGLE-TURN FILTERS: `color`, `size`, `price_min`, `price_max`, and `keyword` are strictly single-turn filters. NEVER carry them over from previous turns unless explicitly stated in current message.
 9. ATTRIBUTE INQUIRIES: When the query asks about available colors, sizes, or options for active category ({active_category}), set `color=None`, `size=None`, `price_min=None`, and `price_max=None` while maintaining `category='{active_category}'`.
 """
@@ -377,12 +380,12 @@ CONTEXT & ATTRIBUTES:
     #     result.keyword = clean_kw
 
     # Reset stale single-turn filters on attribute inquiry queries
-    raw_query = query.lower()
-    if any(w in raw_query for w in ["color", "colour", "size", "rang", "available", "options"]):
-        result.color = None
-        result.size = None
-        result.price_max = None
-        result.price_min = None
+    # raw_query = query.lower()
+    # if any(w in raw_query for w in ["color", "colour", "size", "rang", "available", "options"]):
+    #     result.color = None
+    #     result.size = None
+    #     result.price_max = None
+    #     result.price_min = None
 
     return {
         "intent": result
@@ -527,7 +530,7 @@ def search_product(state: ShoppingState) -> ShoppingState:
             if intent.category:
                 alt_query = alt_query.eq("category", intent.category)
             elif intent.keyword:
-                kw_term = intent.keyword or ""
+                kw_term = intent.keyword.strip()
                 alt_query = alt_query.or_(f"name.ilike.%{kw_term}%,description.ilike.%{kw_term}%,category.ilike.%{kw_term}%")
 
             if intent.color:
@@ -543,12 +546,12 @@ def search_product(state: ShoppingState) -> ShoppingState:
     # Used when user asks for general items like: "Show me black hoodies under 1500"
     else:
         query = supabase.table("products").select("*")
-        kw_term = intent.keyword or ""
+        clean_kw = intent.keyword.strip() if intent.keyword else ""
 
         if intent.category:
             query = query.eq("category", intent.category)
         elif intent.keyword:
-            query = query.or_(f"name.ilike.%{kw_term}%,description.ilike.%{kw_term}%,category.ilike.%{kw_term}%")
+            query = query.or_(f"name.ilike.%{clean_kw}%,description.ilike.%{clean_kw}%,category.ilike.%{clean_kw}%")
 
         if intent.color:
             query = query.ilike("color", intent.color.capitalize())
@@ -633,15 +636,6 @@ def search_product(state: ShoppingState) -> ShoppingState:
         # Default: ALWAYS sort price ascending so index 0 is guaranteed to be the lowest priced item!
         products.sort(key=lambda x: float(x.get("price", float("inf"))))
 
-    # DYNAMIC MATCH PINNING: If query contains explicit product name/keyword, pin matching item to index 0
-    search_term = (intent.product_name or intent.keyword or "").lower().strip()
-    if search_term and products:
-        matching_prods = [p for p in products if search_term in str(p.get("name", "")).lower()]
-        if matching_prods:
-            exact_match = matching_prods[0]
-            products = [exact_match] + [p for p in products if str(p.get("sku", p.get("id"))) != str(exact_match.get("sku", exact_match.get("id")))]
-
-
     # SIMILAR PRODUCTS / RECOMMENDATION
     similar_products = []
     category_to_recommend = intent.category
@@ -670,8 +664,7 @@ def search_product(state: ShoppingState) -> ShoppingState:
 
         similar_products = rec_query.limit(5).execute().data
 
-        # Fallback for similar products: If color match produced 0 recommendations, 
-        # fetch from category alone (excluding primary SKUs)
+        # Fallback for similar products
         if not similar_products and primary_skus:
             similar_products = (
                 supabase.table("products")
@@ -744,11 +737,8 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     else:
         eval_products = products[:5]
 
-    # CHECKOUT PRIORITY FIX: On checkout, respect state's active selected_product first!
-    if intent_str == "checkout":
-        selected_product = state.get("selected_product") or (products[0] if products else None)
-    else:
-        selected_product = (products[0] if products else None) or state.get("selected_product")
+    # RESTORE 6 AUG PRECEDENCE: State's active selected_product ALWAYS takes priority over array default!
+    selected_product = state.get("selected_product") or (products[0] if products else None)
 
     # 1. SPECIAL CHECKOUT RESPONSE HANDLER
     if intent_str == "checkout" and payment_url:
@@ -763,7 +753,7 @@ def generate_response(state: ShoppingState) -> ShoppingState:
 
         return {
             "response": response_text,
-            "displayed_products": [],  # Clean UI: Hide duplicate cards on checkout
+            "displayed_products": [selected_product] if selected_product else (products[:1] if products else []),
             "similar_products": [],
             "products": products,
             "payment_url": payment_url,
@@ -772,7 +762,10 @@ def generate_response(state: ShoppingState) -> ShoppingState:
 
     # 2. STANDARD SHOPPING / CONTEXT RESPONSE HANDLER
     # Isolate LLM prompt context & UI cards on non-shopping turns
-    if intent_type in ["greeting", "general", "out_of_scope"] or intent_str in ["greeting", "general", "out_of_scope"]:
+    route_val = str(getattr(state.get("route"), "value", state.get("route")) or "").lower()
+    is_general = intent_type in ["greeting", "general", "out_of_scope"] or intent_str in ["greeting", "general", "out_of_scope"] or route_val in ["general", "general_chat"]
+
+    if is_general:
         api_displayed_products = []
         api_similar_products = []
         prompt_eval_products = []  # Prevents passing old search products to prompt on "samosa" / "hi" queries
@@ -781,7 +774,7 @@ def generate_response(state: ShoppingState) -> ShoppingState:
         api_similar_products = similar_products[:5]
         prompt_eval_products = eval_products
 
-    # Optimized Prompt Products Array (Saves tokens & prevents history picking)
+    # Optimized Prompt Products Array
     prompt_products = []
     for p in prompt_eval_products:
         prompt_products.append({
@@ -832,11 +825,10 @@ INSTRUCTIONS:
         "response": response.content,
         "displayed_products": api_displayed_products,
         "similar_products": api_similar_products,
-        "products": products,  # Preserved in state checkpointer for multi-turn intent!
+        "products": products,
         "payment_url": payment_url,
-        "selected_product": selected_product  # Preserved in state checkpointer for multi-turn intent!
+        "selected_product": selected_product
     }
-
 def get_table_primary_key(table_name: str = "products") -> str:
     """Inspects table schema directly via Supabase API to find the primary key column."""
     try:

@@ -1,14 +1,14 @@
 ROUTER_PROMPT = """You are an AI router for an e-commerce catalog assistant. Classify the user query into valid JSON matching the schema.
 
 Routes:
-- shopping: Any query inquiring about item availability, inventory stock, catalog searching, pricing, recommendations, purchasing, attribute inquiries (e.g. "what colors are available", "what sizes do you have"), or relative sorting/filtering (e.g., "cheapest", "lowest price", "sasta", "most expensive", "show more") in ANY language.
-- general: Standalone greetings, casual banter, identity questions, thanks, or off-topic conversational statements.
+- shopping: Any query inquiring about clothing/apparel item availability, inventory stock, catalog searching, pricing, recommendations, purchasing, attribute inquiries (e.g. "what colors are available", "what sizes do you have"), or relative sorting/filtering (e.g., "cheapest", "lowest price", "sasta", "most expensive", "show more") in ANY language.
+- general: Standalone greetings, casual banter, identity questions, thanks, food items, non-apparel requests, or off-topic conversational statements.
 
 RULES:
-1. Any query asking if an item, product, or category is sold or available (regardless of whether the item actually exists in the store or what language is used) MUST route to 'shopping'.
-2. Any query asking for occasion wear, wedding/party clothing, or styling advice (e.g. "shaadi samaroh ke liye kuch bataye") MUST route to 'shopping'.
-3. Any query involving relative pricing, sorting (e.g., "cheapest", "lowest price", "sasta", "most expensive"), catalog filtering, or follow-up product adjustments MUST route to 'shopping'. Never route these to 'general'.
-4. Any query asking for available colors, sizes, options, or product attributes MUST route to 'shopping'. Never route these to 'general'.
+1. Any query asking if a clothing/apparel item or category is sold or available MUST route to 'shopping'.
+2. Queries about non-apparel items (e.g., food like samosa, electronics, books) MUST route to 'general'.
+3. Any query asking for occasion wear, wedding/party clothing, or styling advice MUST route to 'shopping'.
+4. Any query involving relative pricing, sorting, or product attributes MUST route to 'shopping'.
 """
 ####
 
@@ -24,7 +24,7 @@ INTENT_PROMPT = """You are an AI shopping intent extractor. Your sole job is to 
 
 ### CRITICAL OUTPUT FORMAT
 - Output strictly valid JSON matching the schema.
-- Output JSON `null` (e.g., "product_name": null) when information is absent. NEVER output the string "null".
+- Output JSON null (e.g., "product_name": null) when information is absent. NEVER output the string "null".
 
 ### SCHEMAS & ALLOWED VALUES
 - intent: "search" | "recommend" | "details" | "checkout" | "greeting" | "general"
@@ -40,14 +40,15 @@ INTENT_PROMPT = """You are an AI shopping intent extractor. Your sole job is to 
 5. "greeting": Conversational banter ("hi", "hello", "thanks").
 6. "general": Non-catalog questions, store policies, food/unsupported requests, general inquiries.
 
-### CATEGORY VS KEYWORD RULE
+### CATEGORY VS KEYWORD VS PRODUCT NAME RULE
+- Specific Model/Product Brand Name (e.g., "SummerLite", "CloudWarm", "BeachFlex") -> set `product_name` = Exact String (e.g. "SummerLite Shorts").
 - Allowed Category Match -> set `category` = Exact String (e.g. "Shorts").
-- Unlisted Term / Out-of-Catalog (e.g., non-clothing items, unsupported apparel) -> set `category` = null. Extract term into `keyword`. If query is completely non-apparel/out of scope, set `intent` = "general".
+- Unlisted Term / Out-of-Catalog (e.g., non-clothing items, food) -> set `category` = null. Extract term into `keyword`. If query is completely non-apparel, set `intent` = "general".
 
 ### DYNAMIC CONTEXT & ENTITY RESET RULES (STRICT ORDER)
 1. PRIMARY EXTRACTION: Extract `color`, `size`, `product_name`, `price_min`, and `price_max` directly from Current User Query.
 2. BUYING CONFIRMATIONS:
-   - If Query expresses purchase confirmation (e.g., "ha mujhe khareedna hai", "buy it", "take me to payment") without naming a new item, set `intent` = "checkout" and MAINTAIN `category` and `product_name` from History.
+   - If Query expresses purchase confirmation (e.g., "ha mujhe khareedna hai", "buy it", "i want to buy that short") without naming a new item, set `intent` = "checkout" and MAINTAIN `category` and `product_name` from History.
 3. FOLLOW-UP & RE-REFERENCING:
    - If Query contains reference pronouns (e.g., "it", "this", "woh", "usme") OR relative sorting phrases (e.g., "cheapest one", "lowest price", "show more"), MAINTAIN `category` and active product context from History.
 4. NEW SUBJECT & OUT-OF-CATALOG RESET:
