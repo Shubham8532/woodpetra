@@ -7,7 +7,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.output_parsers import PydanticOutputParser
 from langsmith import traceable
 from backend.config import llm_fast, llm_20B, llm_70B, llm_120B, supabase
-from langgraph.checkpoint.serde.types import ERROR_ON_UNHANDLED
+# from langgraph.checkpoint.serde.types import ERROR_ON_UNHANDLED
 import warnings
 warnings.filterwarnings("ignore", message=".*Deserializing unregistered type.*")
 
@@ -167,10 +167,18 @@ def router(state: ShoppingState):
         clean = raw.content.replace("```json", "").replace("```", "").strip()
         result = _router_parser.parse(clean)
     except Exception as e:
-        print(f"[Router parse error ({e})] -- defaulting to GENERAL.")
-        # Fallback to GENERAL route on any parsing error, ensuring the system remains responsive even if the LLM output is malformed.
-        from backend.models import RouteType
-        result = RouterModel(route=RouteType.GENERAL)
+        print(f"[Router Parse Error: {e}]")
+        from backend.models import RouteType, RouterModel
+        # Smart Fallback: Agar bot ne pehle alternatives offer kiye the, toh 'shopping' assume karo (8B error par bhi Samosa loop fix!)
+        if last_bot_action in ("offered_alternatives", "denied_oos"):
+            result = RouterModel(route=RouteType.SHOPPING)
+        else:
+            result = RouterModel(route=RouteType.GENERAL)
+
+    print(f"[Router] last_bot_action={last_bot_action!r}  route={result.route!r}")
+    return {
+        "route": result.route
+    }
 
     print(f"[Router] last_bot_action={last_bot_action!r}  route={result.route!r}")
     return {
