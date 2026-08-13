@@ -88,6 +88,27 @@ class ShoppingIntentModel(BaseModel):
 
 #==================================================================
 
+# Yeh ek temporary dictionary structured blueprint hai. 
+# Har nayi turn ke shuru hote hi iske saare slots (category, keyword, color, etc.) 
+# reset ho jate hain, taaki pichle turn ka out-of-stock topic next turn mein bleeding (leak) na kare.
+class TurnSlots(TypedDict, total=False):
+    """
+    Ephemeral per-turn search slots — explicitly reset by the `reset_turn_slots`
+    node at the start of every new user turn.
+    Mirrors the search-relevant fields from ShoppingIntentModel so stale values
+    (e.g. 'curtains' from a previous denial turn) can never bleed into the next turn.
+    Persistent checkout context (active_focus_product, selected_product) is NOT here.
+    """
+    product_name: Optional[str]
+    category: Optional[str]
+    keyword: Optional[str]
+    color: Optional[str]
+    size: Optional[str]
+    price_min: Optional[int]
+    price_max: Optional[int]
+
+
+
 class ShoppingState(TypedDict):
     query: str = Field(..., description="User's shopping query")
     route: RouteType | None = Field(None, description="ROUTER_PROMPT result")
@@ -99,3 +120,7 @@ class ShoppingState(TypedDict):
     payment_url: Optional[str] = Field(None, description="Payment URL for checkout if applicable")
     response: str | None = Field(None, description="Response to the user based on the shopping intent and products")
     displayed_products: List[dict] | None = Field(None, description="List of products to be displayed to the user in popup")
+    # ── Dual-Layer State additions ────────────────────────────────────────────
+    turn_slots: Optional[dict] = Field(None, description="Temporary search filters for the current query that reset every turn to prevent stale slot leakage.")
+    active_focus_product: Optional[dict] = Field(None, description="The last successfully viewed product that stays saved across turns for multi-turn checkout context like 'buy that'.")
+    last_bot_action: Optional[str] = Field(None, description="The bot's response signal from the previous turn ('showed_products' or 'offered_alternatives') used to route follow-up replies like 'yes' or 'show me'")

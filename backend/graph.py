@@ -6,8 +6,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.runnables import RunnableConfig
 from langchain_core.output_parsers import PydanticOutputParser
 from langsmith import traceable
-from backend.config import llm_fast, llm_70B, llm_120B, supabase
-# from langgraph.checkpoint.serde.types import ERROR_ON_UNHANDLED
+from backend.config import llm_fast, llm_20B, llm_70B, llm_120B, supabase
+from langgraph.checkpoint.serde.types import ERROR_ON_UNHANDLED
 import warnings
 warnings.filterwarnings("ignore", message=".*Deserializing unregistered type.*")
 
@@ -18,6 +18,7 @@ from backend.models import(
     ContextRoute,
     ShoppingIntentModel,
     IntentType,
+    TurnSlots
 )
 from backend.prompt import (
     ROUTER_PROMPT,
@@ -50,64 +51,131 @@ def invoke_with_fallback(messages, schema=None):
     Executes primary 70B model with failover to 120B.
     Falls back gracefully to string Pydantic parsing if function calling fails on backup model.
     """
-    if not schema:
-        try:
-            return llm_70B.invoke(messages)
-        except Exception as e:
-            print(f"⚠️ Primary 70B error ({e}). Failing over to 120B...")
-            return llm_120B.invoke(messages)
+    # if not schema:
+    #     try:
+    #         return llm_70B.invoke(messages)
+    #     except Exception as e:
+    #         print(f"⚠️ Primary 70B error ({e}). Failing over to 120B...")
+    #         return llm_120B.invoke(messages)
 
-    model_70b = llm_70B.with_structured_output(schema)
+    # model_70b = llm_70B.with_structured_output(schema)
 
-    try:
-        return model_70b.invoke(messages)
-    except Exception as e:
-        print(f"⚠️ Primary 70B error ({e}). Failing over to 120B...")
+    # try:
+    #     return model_70b.invoke(messages)
+    # except Exception as e:
+    #     print(f"⚠️ Primary 70B error ({e}). Failing over to 120B...")
         
-        # Try native structured output on 120B
+    #     # Try native structured output on 120B
+    #     try:
+    #         model_120b = llm_120B.with_structured_output(schema)
+    #         return model_120b.invoke(messages)
+    #     except Exception as fallback_err:
+    #         print(f"⚠️ 120B native tool-call failed ({fallback_err}). Retrying with Pydantic parser fallback...")
+            
+    #         parser = PydanticOutputParser(pydantic_object=schema)
+    #         format_instructions = parser.get_format_instructions()
+            
+    #         augmented_messages = list(messages)
+    #         augmented_messages.append((
+    #             "human", 
+    #             f"\n\nIMPORTANT: Return ONLY a raw valid JSON object matching this schema:\n{format_instructions}"
+    #         ))
+            
+    #         raw_response = llm_120B.invoke(augmented_messages)
+            
+    #         # Clean markdown code blocks or literal '"null"' strings
+    #         clean_text = (
+    #             raw_response.content
+    #             .replace("```json", "")
+    #             .replace("```", "")
+    #             .replace('"null"', "null")
+    #             .strip()
+    #         )
+    #         return parser.parse(clean_text)
+    # Level 1: Primary Model (GPT OSS 20B - 1000 T/s)
+    try:
+        raw = llm_20B.invoke(messages)
+        clean_text = raw.content.replace("```json", "").replace("```", "").replace('"null"', "null").strip()
+        return parser.parse(clean_text) if parser else raw.content
+    except Exception as err20:
+        print(f"[20B Failed: {err20}] -> Falling back to 120B...")
+        
+        # Level 2: Fallback Model 1 (GPT OSS 120B - 500 T/s)
         try:
-            model_120b = llm_120B.with_structured_output(schema)
-            return model_120b.invoke(messages)
-        except Exception as fallback_err:
-            print(f"⚠️ 120B native tool-call failed ({fallback_err}). Retrying with Pydantic parser fallback...")
+            raw = llm_120B.invoke(messages)
+            clean_text = raw.content.replace("```json", "").replace("```", "").replace('"null"', "null").strip()
+            return parser.parse(clean_text) if parser else raw.content
+        except Exception as err120:
+            print(f"[120B Failed: {err120}] -> Falling back to Llama 3.3 70B...")
             
-            parser = PydanticOutputParser(pydantic_object=schema)
-            format_instructions = parser.get_format_instructions()
-            
-            augmented_messages = list(messages)
-            augmented_messages.append((
-                "human", 
-                f"\n\nIMPORTANT: Return ONLY a raw valid JSON object matching this schema:\n{format_instructions}"
-            ))
-            
-            raw_response = llm_120B.invoke(augmented_messages)
-            
-            # Clean markdown code blocks or literal '"null"' strings
-            clean_text = (
-                raw_response.content
-                .replace("```json", "")
-                .replace("```", "")
-                .replace('"null"', "null")
-                .strip()
-            )
-            return parser.parse(clean_text)
+            # Level 3: Fallback Model 2 (Llama 3.3 70B - 280 T/s)
+            raw = llm_70B.invoke(messages)
+            clean_text = raw.content.replace("```json", "").replace("```", "").replace('"null"', "null").strip()
+            return parser.parse(clean_text) if parser else raw.content
+
+
+# har naya question aane par pichle turn ke temporary search data ko clear karna
+# taaki pichle turn ka out-of-stock ya irrelevant topic next turn mein bleed na kare
+@traceable(name="Reset Turn Slots", description="Wipe per-turn ephemeral slots before each new user turn.")
+def reset_turn_slots(state: ShoppingState) -> ShoppingState:
+    """
+    Clears per-turn search filters and product lists before processing 
+    the current query to prevent stale data leakage.
+    """
+    return {
+        "products": [],
+        "similar_products": [],
+        "displayed_products": [],
+        "turn_slots": {
+            "product_name": None,
+            "category": None,
+            "keyword": None,
+            "color": None,
+            "size": None,
+            "price_min": None,
+            "price_max": None,
+        },
+    }
+
+
+# BEFORE: router used .with_structured_output() which triggers Groq HTTP 400
+# ('attempted to call tool json which was not in request.tools') on llama-3.1-8b.
+# The exception was silently swallowed and the route defaulted to 'general',
+# causing affirmatives like 'ha'/'yes' to always hit general_chat.
+#
+# AFTER: router uses PydanticOutputParser + explicit JSON format instructions
+# embedded in the system prompt. The LLM returns a raw JSON string that the
+# parser validates — zero Groq tool-call machinery involved.
+_router_parser = PydanticOutputParser(pydantic_object=RouterModel)
+
+
 
 @traceable(name="Router", description="Route the user query to the appropriate workflow path.")
 def router(state: ShoppingState):
-
     query = state["query"]
-    structured_llm = llm_fast.with_structured_output(RouterModel)
+    last_bot_action = state.get("last_bot_action") or "none"
+    context_hint = f"Previous assistant action: {last_bot_action}"
 
-    result = structured_llm.invoke(
-        [
-            ("system", ROUTER_PROMPT),
-            ("human", query)
-        ]
-    )
+    format_instructions = _router_parser.get_format_instructions()
+    system_with_schema = f"{ROUTER_PROMPT}\n\nOUTPUT FORMAT:\nReturn ONLY a raw JSON object (no markdown, no extra text).\n{format_instructions}"
+
+    try:
+        raw = llm_fast.invoke([
+            ("system", system_with_schema),
+            ("human", f"{context_hint}\nUser: {query}")
+        ])
+        clean = raw.content.replace("```json", "").replace("```", "").strip()
+        result = _router_parser.parse(clean)
+    except Exception as e:
+        print(f"[Router parse error ({e})] -- defaulting to GENERAL.")
+        # Fallback to GENERAL route on any parsing error, ensuring the system remains responsive even if the LLM output is malformed.
+        from backend.models import RouteType
+        result = RouterModel(route=RouteType.GENERAL)
+
+    print(f"[Router] last_bot_action={last_bot_action!r}  route={result.route!r}")
     return {
-        "route": result.route    
+        "route": result.route
     }
-
 
 @traceable(name="Decide Route", description="Decide the next workflow path based on the router's output.")
 def decide_route(state: ShoppingState):
@@ -186,11 +254,11 @@ Current User Query:
     # print(prompt)
     # print("=" * 80)
     
-    history = load_history(config)
+    # history = load_history(config)
 
     # print(history)
 
-    history_text = build_conversation(history)
+    # history_text = build_conversation(history)
 
     # print(history_text)
 
@@ -203,26 +271,80 @@ Current User Query:
     print("HISTORY")
     pprint(history)
     print("=" * 80)
-    response = llm_fast.invoke(
-    [
-        (
-            "system",
-            GENERAL_CHAT_PROMPT,
-            ),
-        (
-            "human",
-            prompt
-        )
-    ]
-)
+#     response = llm_fast.invoke(
+#     [
+#         (
+#             "system",
+#             GENERAL_CHAT_PROMPT,
+#             ),
+#         (
+#             "human",
+#             prompt
+#         )
+#     ]
+# )
+
+    # 20B Primary with Fallback (No parser passed -> returns clean response string)
+    try:
+        response_text = invoke_with_fallback([
+            ("system", GENERAL_CHAT_PROMPT),
+            ("human", prompt)
+        ])
+    except Exception as e:
+        print(f"[general_chat Error]: {e}")
+        response_text = "I'm here to help! What style or clothing item are you looking for today?"
+
+    # BEFORE: general_chat always wrote last_bot_action='offered_alternatives',
+    # even for pure greetings ("hi", "hello"). This poisoned the next turn:
+    # a food query like "samosa hai kya" after a greeting would find
+    # last_bot_action='offered_alternatives' and incorrectly hit fetch_featured.
+    #
+    # AFTER: only set 'offered_alternatives' when the query is a genuine denial
+    # (non-apparel / food / out-of-catalog). Pure greetings preserve the
+    # existing last_bot_action (or leave it as None) so they don't create a
+    # false denial signal.
+    # _PURE_GREETING_WORDS = frozenset({
+    #     "hi", "hii", "hiii", "hello", "hey", "helo", "hlo", "hola",
+    #     "good morning", "good afternoon", "good evening", "goodnight",
+    #     "gud morning", "gud mrng", "greetings", "namaste", "namaskar",
+    #     "thanks", "thank you", "shukriya", "bye", "goodbye",
+    # })
+    # query_lower = state.get("query", "").lower().strip()
+    # is_pure_greeting = query_lower in _PURE_GREETING_WORDS
+
+    # if is_pure_greeting:
+    #     # Greeting: preserve whatever last_bot_action was (don't overwrite)
+    #     next_last_bot_action = state.get("last_bot_action")
+    # else:
+    #     # Genuine denial / out-of-catalog / food query: signal for next-turn routing
+    #     next_last_bot_action = "offered_alternatives"
+
+    # print(f"[general_chat] is_pure_greeting={is_pure_greeting}  next_last_bot_action={next_last_bot_action!r}")
+
+    # Pure AI-Intent Signal Tracking (No Manual Hardcoded Word Sets!)
+    # Re-uses the intent already extracted by the parallel `extract_intent` node.
+    intent_obj = state.get("intent")
+    intent_type = getattr(intent_obj, "intent", intent_obj)
+    intent_str = str(getattr(intent_type, "value", intent_type) or "").lower()
+
+    if intent_str == "greeting":
+        # Pure greeting (e.g., "hi", "yo", "namaste"): preserve existing signal
+        next_last_bot_action = state.get("last_bot_action")
+
+    else:
+       # Out-of-catalog / non-apparel query (e.g., "samosa", "curtains"): 
+        # Set signal so the next-turn affirmative ("ha"/"yes") triggers product cards
+        next_last_bot_action = "offered_alternatives" 
+
+    print(f"[general_chat] intent={intent_str!r}  next_last_bot_action={next_last_bot_action!r}")
 
     return {
-        "response": response.content,
-        # "products": state.get("products", []),
+        "response": response_text,
         "products": [],
         "displayed_products": [],
         "similar_products": [],
-        "selected_product": state.get("selected_product") # Memory intact for Turn 4 checkout!
+        "selected_product": state.get("selected_product"),  # Memory intact for Turn 4 checkout!
+        "last_bot_action": next_last_bot_action,
     }
 
 
@@ -365,14 +487,23 @@ CONTEXT & ATTRIBUTES:
     #         ("human", query)
     #     ]
     # )
-
-    result = invoke_with_fallback(
-        [
-            ("system", system_prompt),
-            ("human", query)
-        ],
-    schema=ShoppingIntentModel
+    format_instructions = intent_parser.get_format_instructions()
+    system_with_schema = (
+        system_prompt + f"\n\nOUTPUT FORMAT:\nReturn ONLY a raw JSON object matching the schema below (no markdown, no backticks).\n{format_instructions}"
     )
+
+    
+    try:
+        result = invoke_with_fallback(
+            [
+                ("system", system_with_schema),
+                ("human", query)
+            ],
+            parser=intent_parser
+        )
+    except Exception as e:
+        print(f"[extract_intent Error] All fallback models failed ({e}) -> Using default neutral intent.")
+        result = ShoppingIntentModel(intent=IntentType.GENERAL)
 
     # # Smart Fallback: Iff no category or produvt_name was matched, assign raw query to keyword
     # if not result.category and not result.product_name and result.intent in ["search", "recommend"]:
@@ -387,8 +518,20 @@ CONTEXT & ATTRIBUTES:
     #     result.price_max = None
     #     result.price_min = None
 
+    # Directly map clean intent to ephemeral turn_slots (Zero Manual Pronoun Filtering)
+    turn_slots_dict = {
+        "product_name": result.product_name,
+        "category": result.category,
+        "keyword": result.keyword,
+        "color": result.color,
+        "size": result.size.value if result.size else None,
+        "price_min": result.price_min,
+        "price_max": result.price_max,
+    }
+
     return {
-        "intent": result
+        "intent": result,
+        "turn_slots": turn_slots_dict,
     }
 
 
@@ -806,20 +949,42 @@ INSTRUCTIONS:
 - If query is strictly about COLORS, state ONLY the colors listed in Stock Colors ({colors_summary}).
 - If query is strictly about SIZES, state ONLY the sizes listed in Stock Sizes ({sizes_summary})."""
 
-    response = invoke_with_fallback(
-        [
+    try:
+        response_text = invoke_with_fallback([
             ("system", RESPONSE_PROMPT),
             ("human", prompt)
-        ]
-    )
+        ])
+    except Exception as e:
+        print(f"[generate_response Error]: {e}")
+        response_text = "Here are top clothing choices based on your request!"
+
+    # ── PERSISTENT TURN SIGNALS ──────────────────────────────────────────────
+    if intent_str not in ("general", "greeting", "out_of_scope"):
+        next_bot_action = "showed_products" if products else "offered_alternatives"
+    else:
+        next_bot_action = state.get("last_bot_action")
+
+    next_focus = state.get("active_focus_product")
+    if products and intent_str not in ("general", "greeting", "out_of_scope"):
+        intent_product_name = getattr(raw_intent, "product_name", None)
+        if intent_product_name:
+            named_match = next(
+                (p for p in products if intent_product_name.lower() in p.get("name", "").lower()),
+                None
+            )
+            next_focus = named_match if named_match else products[0]
+        else:
+            next_focus = state.get("active_focus_product") or products[0]
 
     return {
-        "response": response.content,
+        "response": response_text,  # Clean string variable (No .content crash)
         "displayed_products": api_displayed_products,
         "similar_products": api_similar_products,
         "products": products,
         "payment_url": payment_url,
-        "selected_product": selected_product
+        "selected_product": selected_product,
+        "last_bot_action": next_bot_action,
+        "active_focus_product": next_focus
     }
 
 def get_table_primary_key(table_name: str = "products") -> str:
@@ -845,13 +1010,15 @@ def get_table_primary_key(table_name: str = "products") -> str:
         
     return "sku"  # manual fallback if schema inspection fails
 
-def create_checkout_session(state: ShoppingState) -> ShoppingState:
+@traceable(name="Create Checkout Session", description="Deterministic checkout node with history scanning and Razorpay payment link creation.")
+def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> ShoppingState:
     """
     DETERMINISTIC CHECKOUT NODE:
-    1. Checks extracted intent for newly requested product_name.
-    2. Dynamically queries primary key via get_table_primary_key().
-    3. Verifies actual price and stock directly from Supabase (ground truth).
-    4. Calls Razorpay API to generate a real Payment Link.
+    1. Checks extracted intent for newly requested product_name (highest priority).
+    2. Scans recent conversation history for the last explicitly mentioned product
+       name and fetches it from DB (handles 'ha kharidna hai' generic confirmations).
+    3. Falls back to active_focus_product -> selected_product -> products[0].
+    4. Verifies stock and calls Razorpay to generate a payment link.
     """
     products = state.get("products") or []
     intent = state.get("intent")
@@ -860,25 +1027,65 @@ def create_checkout_session(state: ShoppingState) -> ShoppingState:
     req_name = getattr(intent, "product_name", None) if intent else None
     target_product = None
 
-    # 1. First priority: Search DB directly if a specific product_name was extracted in checkout intent
+    # ── PRIORITY 1: Explicit product_name in current intent ──────────────────
     if req_name:
         try:
             db_res = supabase.table("products").select("*").ilike("name", f"%{req_name}%").limit(1).execute()
             if db_res and db_res.data:
                 target_product = db_res.data[0]
+                print(f"[Checkout P1] Found via intent product_name: {target_product.get('name')}")
         except Exception as e:
             print(f"[Checkout Intent Name Search Error]: {e}")
 
-    # 2. Second priority: Check if any item in current products memory matches req_name
+    # Check current products memory for req_name match
     if not target_product and req_name and products:
         for p in products:
             if req_name.lower() in p.get("name", "").lower():
                 target_product = p
+                print(f"[Checkout P1b] Found in products memory: {target_product.get('name')}")
                 break
 
-    # 3. Fallback: Use state's existing selected_product or first product in memory
+    # ── PRIORITY 2: Scan conversation history for last named product ──────────
+    # Handles generic confirmations ("ha kharidna hai", "buy it") where intent.product_name is None
     if not target_product:
-        target_product = state.get("selected_product") or (products[0] if products else None)
+        try:
+            history_snapshots = load_history(config)
+            for snap in history_snapshots:  # newest -> oldest
+                past_intent = snap.get("intent")
+                past_name = getattr(past_intent, "product_name", None) if past_intent else None
+                if past_name:
+                    db_res = supabase.table("products").select("*").ilike("name", f"%{past_name}%").limit(1).execute()
+                    if db_res and db_res.data:
+                        target_product = db_res.data[0]
+                        print(f"[Checkout P2] Found via history product_name='{past_name}': {target_product.get('name')}")
+                        break
+        except Exception as hist_err:
+            print(f"[Checkout History Scan Error]: {hist_err}")
+
+    # ── PRIORITY 3: active_focus_product -> selected_product -> products[0] ────
+    if not target_product:
+        afp = state.get("active_focus_product")
+        sel = state.get("selected_product")
+        p0 = products[0] if products else None
+
+        afp_name = (afp or {}).get("name", "")
+        raw_query = state.get("query", "").lower()
+
+        if afp and (req_name is None or req_name.lower() in afp_name.lower()):
+            target_product = afp
+            print(f"[Checkout P3a] Using active_focus_product: {afp_name}")
+        elif sel:
+            target_product = sel
+            print(f"[Checkout P3b] Using selected_product: {sel.get('name')}")
+        elif p0:
+            # Last resort: Name-coherence check before using products[0]
+            p0_name = p0.get("name", "").lower()
+            focus_name = afp_name.lower() if afp else ""
+            if any(w in p0_name for w in raw_query.split() if len(w) > 3) or (focus_name and focus_name in p0_name):
+                target_product = p0
+                print(f"[Checkout P3c] Using products[0] (name-coherent): {p0.get('name')}")
+            else:
+                print(f"[Checkout P3c] Skipped products[0] ('{p0.get('name')}') — not coherent with query '{raw_query}'")
 
     if not target_product:
         return {
@@ -904,7 +1111,7 @@ def create_checkout_session(state: ShoppingState) -> ShoppingState:
         print(f"[Supabase Lookup Error]: {db_err}")
         db_product = target_product
 
-    # Safe stock check (handles string values from DB)
+    # Safe stock check
     raw_stock = db_product.get("stock", 0)
     try:
         stock_count = int(raw_stock) if raw_stock is not None else 0
@@ -955,7 +1162,7 @@ def create_checkout_session(state: ShoppingState) -> ShoppingState:
             "selected_product": db_product,
             "products": products
         }
-
+    
 def route_after_intent(state: ShoppingState) -> str:
     """
     Check if intent extracted by LLM is CHECKOUT.
@@ -975,9 +1182,62 @@ def route_after_intent(state: ShoppingState) -> str:
     
     return "search_products"
 
-# Graph
+@traceable(name="Fetch Featured", description="Fetch top products per category after an out-of-stock denial / alternative offer.")
+def fetch_featured(state: ShoppingState) -> ShoppingState:
+    """
+    Surfaces real product cards when the user affirms after a denial.
+    Fetches top 3 products per catalog category from Supabase.
+    """
+    try:
+        # Get distinct categories available in DB
+        all_cats_res = supabase.table("products").select("category").execute()
+        distinct_categories = list(set(
+            p.get("category") for p in (all_cats_res.data or []) if p.get("category")
+        ))
+
+        featured: list = []
+        for cat in distinct_categories:
+            cat_items = (
+                supabase.table("products")
+                .select("*")
+                .eq("category", cat)
+                .order("price", desc=False)
+                .limit(3)
+                .execute()
+                .data
+            )
+            if cat_items:
+                featured.extend(cat_items)
+
+        # Fallback: raw limit query if category enumeration fails or returns empty
+        if not featured:
+            featured = (
+                supabase.table("products")
+                .select("*")
+                .order("price", desc=False)
+                .limit(12)
+                .execute()
+                .data
+            )
+    except Exception as e:
+        print(f"[fetch_featured error]: {e}")
+        featured = []
+
+    # Inject a RECOMMEND intent so generate_response produces a showcase reply
+    featured_intent = ShoppingIntentModel(intent=IntentType.RECOMMEND)
+
+    return {
+        "products": featured,
+        "similar_products": [],
+        "intent": featured_intent,
+    }
+
+
+# ── GRAPH INITIALIZATION ──────────────────────────────────────────────────────
 graph = StateGraph(ShoppingState)
 
+# 1. ADD NODES
+graph.add_node("reset_turn_slots", reset_turn_slots)      # Ephemeral slot reset pre-step
 graph.add_node("router", router)
 graph.add_node("general_chat", general_chat)
 graph.add_node("extract_intent", extract_intent)
@@ -985,43 +1245,65 @@ graph.add_node("context_decision", context_decision)
 graph.add_node("search_products", search_product)
 graph.add_node("create_checkout_session", create_checkout_session)
 graph.add_node("generate_response", generate_response)
+graph.add_node("fetch_featured", fetch_featured)          # Affirmative follow-up showcase node
 
-# Parallel Fan-Out from START
-graph.add_edge(START, "router")
-graph.add_edge(START, "extract_intent")
+# 2. STEP 1: SERIAL PRE-STEP (Reset ephemeral slots before routing/extraction)
+graph.add_edge(START, "reset_turn_slots")
 
-# Parallel Fan-In into context_decision
+# STEP 2: PARALLEL FAN-OUT (Preserves speed & concurrency)
+graph.add_edge("reset_turn_slots", "router")
+graph.add_edge("reset_turn_slots", "extract_intent")
+
+# STEP 3: PARALLEL FAN-IN INTO CONTEXT_DECISION
 graph.add_edge("router", "context_decision")
 graph.add_edge("extract_intent", "context_decision")
 
-# Router Gate Function
+
+# ── PURE AI ROUTER GATE FUNCTION (ZERO MANUAL STRING MATCHING) ────────────────
 def route_post_sync(state: ShoppingState) -> str:
+    """
+    Pure AI Gate Function:
+    Rely strictly on Router LLM output, Intent extraction, and Bot Action Signals.
+    No hardcoded frozensets, regex, or manual word matching!
+    """
     route = state.get("route")
-    route_str = str(route.value if hasattr(route, "value") else route).lower()
+    route_str = str(getattr(route, "value", route) or "").lower()
 
-    # If general greeting/banter
-    if route_str == "general":
-        return "general_chat"
+    last_action = state.get("last_bot_action")
 
-    # Evaluate checkout intent
+    # Safe extraction of extracted intent
     intent = state.get("intent")
     intent_type = getattr(intent, "intent", intent)
-    intent_str = str(intent_type.value if hasattr(intent_type, "value") else intent_type).lower()
+    intent_str = str(getattr(intent_type, "value", intent_type) or "").lower()
 
+    print(f"[route_post_sync] route={route_str!r} | intent={intent_str!r} | last_action={last_action!r}")
+
+    # 1. EVALUATE CHECKOUT INTENT (Highest Priority)
     if intent_str == "checkout":
         return "create_checkout_session"
 
-    # Evaluate context route
+    # 2. PURE AI AFFIRMATIVE FOLLOW-UP (No manual frozensets!)
+    # If bot previously offered alternatives/denied AND the AI Router classified current turn as 'shopping'
+    if last_action == "offered_alternatives" and route_str == "shopping":
+        print("[route_post_sync] Pure AI Signal -> Branching to fetch_featured")
+        return "fetch_featured"
+
+    # 3. EVALUATE GENERAL / BANTER ROUTE
+    if route_str == "general":
+        return "general_chat"
+
+    # 4. EVALUATE CONTEXT DECISION ROUTE
     context_route = state.get("context_route")
-    context_str = str(getattr(context_route, "value", context_route)).lower()
+    context_str = str(getattr(context_route, "value", context_route) or "").lower()
 
     if context_str == "context":
         return "generate_response"
 
+    # 5. DEFAULT SHOPPING FLOW
     return "search_products"
 
 
-# Conditional Branching
+# 3. CONDITIONAL BRANCHING
 graph.add_conditional_edges(
     "context_decision",
     route_post_sync,
@@ -1030,17 +1312,89 @@ graph.add_conditional_edges(
         "create_checkout_session": "create_checkout_session",
         "search_products": "search_products",
         "generate_response": "generate_response",
+        "fetch_featured": "fetch_featured",
     }
 )
 
-# Terminal Edges
+# 4. TERMINAL EDGES
 graph.add_edge("search_products", "generate_response")
 graph.add_edge("create_checkout_session", "generate_response")
+graph.add_edge("fetch_featured", "generate_response")
 graph.add_edge("general_chat", END)
 graph.add_edge("generate_response", END)
 
+# 5. COMPILE GRAPH
 memory = InMemorySaver()
 workflow = graph.compile(checkpointer=memory)
+
+
+
+# # Graph
+# graph = StateGraph(ShoppingState)
+
+# graph.add_node("router", router)
+# graph.add_node("general_chat", general_chat)
+# graph.add_node("extract_intent", extract_intent)
+# graph.add_node("context_decision", context_decision)
+# graph.add_node("search_products", search_product)
+# graph.add_node("create_checkout_session", create_checkout_session)
+# graph.add_node("generate_response", generate_response)
+
+# # Parallel Fan-Out from START
+# graph.add_edge(START, "router")
+# graph.add_edge(START, "extract_intent")
+
+# # Parallel Fan-In into context_decision
+# graph.add_edge("router", "context_decision")
+# graph.add_edge("extract_intent", "context_decision")
+
+# # Router Gate Function
+# def route_post_sync(state: ShoppingState) -> str:
+#     route = state.get("route")
+#     route_str = str(route.value if hasattr(route, "value") else route).lower()
+
+#     # If general greeting/banter
+#     if route_str == "general":
+#         return "general_chat"
+
+#     # Evaluate checkout intent
+#     intent = state.get("intent")
+#     intent_type = getattr(intent, "intent", intent)
+#     intent_str = str(intent_type.value if hasattr(intent_type, "value") else intent_type).lower()
+
+#     if intent_str == "checkout":
+#         return "create_checkout_session"
+
+#     # Evaluate context route
+#     context_route = state.get("context_route")
+#     context_str = str(getattr(context_route, "value", context_route)).lower()
+
+#     if context_str == "context":
+#         return "generate_response"
+
+#     return "search_products"
+
+
+# # Conditional Branching
+# graph.add_conditional_edges(
+#     "context_decision",
+#     route_post_sync,
+#     {
+#         "general_chat": "general_chat",
+#         "create_checkout_session": "create_checkout_session",
+#         "search_products": "search_products",
+#         "generate_response": "generate_response",
+#     }
+# )
+
+# # Terminal Edges
+# graph.add_edge("search_products", "generate_response")
+# graph.add_edge("create_checkout_session", "generate_response")
+# graph.add_edge("general_chat", END)
+# graph.add_edge("generate_response", END)
+
+# memory = InMemorySaver()
+# workflow = graph.compile(checkpointer=memory)
 
 # # Context Decision Edge
 # graph.add_conditional_edges(
