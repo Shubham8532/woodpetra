@@ -92,26 +92,52 @@ def invoke_with_fallback(messages, schema=None):
     #             .strip()
     #         )
     #         return parser.parse(clean_text)
-    # Level 1: Primary Model (GPT OSS 20B - 1000 T/s)
+    
+def invoke_with_fallback(messages, parser=None):
+    """
+    1. Primary: 20B Model
+    2. Fallback 1: 120B Model (Only if 20B fails)
+    3. Fallback 2: 70B Model (Only if 120B fails)
+    """
+    # ── TRY PRIMARY MODEL (20B) ──
     try:
-        raw = llm_20B.invoke(messages)
-        clean_text = raw.content.replace("```json", "").replace("```", "").replace('"null"', "null").strip()
-        return parser.parse(clean_text) if parser else raw.content
-    except Exception as err20:
-        print(f"[20B Failed: {err20}] -> Falling back to 120B...")
+        raw_res = llm_20B.invoke(messages)
+        content = raw_res.content if hasattr(raw_res, 'content') else str(raw_res)
         
-        # Level 2: Fallback Model 1 (GPT OSS 120B - 500 T/s)
-        try:
-            raw = llm_120B.invoke(messages)
-            clean_text = raw.content.replace("```json", "").replace("```", "").replace('"null"', "null").strip()
-            return parser.parse(clean_text) if parser else raw.content
-        except Exception as err120:
-            print(f"[120B Failed: {err120}] -> Falling back to Llama 3.3 70B...")
-            
-            # Level 3: Fallback Model 2 (Llama 3.3 70B - 280 T/s)
-            raw = llm_70B.invoke(messages)
-            clean_text = raw.content.replace("```json", "").replace("```", "").replace('"null"', "null").strip()
-            return parser.parse(clean_text) if parser else raw.content
+        if parser:
+            clean = content.replace("```json", "").replace("```", "").strip()
+            return parser.parse(clean)
+        return content
+
+    except Exception as e1:
+        print(f"[Primary 20B Failed: {e1}] -> Falling back to 120B...")
+
+    # ── TRY FALLBACK 1 (120B) ──
+    try:
+        raw_res = llm_120B.invoke(messages)
+        content = raw_res.content if hasattr(raw_res, 'content') else str(raw_res)
+        
+        if parser:
+            clean = content.replace("```json", "").replace("```", "").strip()
+            return parser.parse(clean)
+        return content
+
+    except Exception as e2:
+        print(f"[Fallback 120B Failed: {e2}] -> Falling back to Llama 3.3 70B...")
+
+    # ── TRY FALLBACK 2 (70B) ──
+    try:
+        raw_res = llm_70B.invoke(messages)
+        content = raw_res.content if hasattr(raw_res, 'content') else str(raw_res)
+        
+        if parser:
+            clean = content.replace("```json", "").replace("```", "").strip()
+            return parser.parse(clean)
+        return content
+
+    except Exception as e3:
+        print(f"[ALL Models Failed]: {e3}")
+        raise e3
 
 
 # har naya question aane par pichle turn ke temporary search data ko clear karna
