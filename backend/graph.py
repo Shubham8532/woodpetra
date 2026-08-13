@@ -46,11 +46,11 @@ razorpay_client = razorpay.Client(
 #         print(f"⚠️ Primary 70B error ({e}). Failing over to GPT-OSS 120B...")
 #         return model_120b.invoke(messages)
 
-def invoke_with_fallback(messages, schema=None):
-    """
-    Executes primary 70B model with failover to 120B.
-    Falls back gracefully to string Pydantic parsing if function calling fails on backup model.
-    """
+# def invoke_with_fallback(messages, schema=None):
+#     """
+#     Executes primary 70B model with failover to 120B.
+#     Falls back gracefully to string Pydantic parsing if function calling fails on backup model.
+#     """
     # if not schema:
     #     try:
     #         return llm_70B.invoke(messages)
