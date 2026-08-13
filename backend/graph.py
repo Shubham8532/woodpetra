@@ -409,7 +409,7 @@ def build_conversation(history, max_turns=3):
 # ========================================== 
 # For 7B model compatibility
 # Output parser instance for standard text parsing fallback
-# intent_parser = PydanticOutputParser(pydantic_object=ShoppingIntentModel)
+intent_parser = PydanticOutputParser(pydantic_object=ShoppingIntentModel)
 
 
 #==========================================
