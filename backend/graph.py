@@ -963,7 +963,11 @@ Stock Sizes: {sizes_summary}
 Top Products: {prompt_products if prompt_products else "None"}
 
 INSTRUCTIONS:
-- Answer directly using the context above in 2-3 concise, friendly Hinglish sentences.
+- LANGUAGE MATCHING (STRICT): Always respond in the EXACT SAME language and script as the user query:
+  * English query -> Respond ONLY in pure, natural English.
+  * Hinglish (Roman Hindi) query -> Respond in friendly Hinglish.
+  * Devanagari Hindi query -> Respond ONLY in pure Hindi script.
+- Answer directly and concisely in 1-2 friendly sentences.
 - If query is non-shopping (general/greeting/unsupported items), state clearly that we don't carry that item, mention our store apparel categories, and optionally recommend top alternatives from Top Products.
 - If query is strictly about COLORS, state ONLY the colors listed in Stock Colors ({colors_summary}).
 - If query is strictly about SIZES, state ONLY the sizes listed in Stock Sizes ({sizes_summary})."""
