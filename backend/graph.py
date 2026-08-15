@@ -1288,54 +1288,67 @@ graph.add_edge(START, "reset_turn_slots")
 graph.add_edge("reset_turn_slots", "router")
 graph.add_edge("router", "context_decision")
 
+# ── 1. ROUTER GATE FUNCTION (Gate 1) ──────────────────────────────────────────
 def route_post_sync(state: ShoppingState) -> str:
     """
-    Rely strictly on Router LLM output, state history, and Bot Action Signals.
-    Bypasses extract_intent on general banter and affirmative showcase.
+    Rely strictly on Router LLM output.
+    General chatter goes to general_chat.
+    All shopping queries go to extract_intent.
     """
     route = state.get("route")
     route_str = str(getattr(route, "value", route) or "").lower()
 
-    last_action = state.get("last_bot_action")
-
-    print(f"[route_post_sync] route={route_str!r} | last_action={last_action!r}")
-
-    # 1. PURE AI AFFIRMATIVE FOLLOW-UP ("Yes" / "Ha" after denial)
-    if last_action in ("offered_alternatives", "denied_oos") and route_str == "shopping":
-        print("[route_post_sync] Pure AI Signal -> Branching to fetch_featured")
-        return "fetch_featured"
-
-    # 2. GENERAL BANTER / GREETINGS (Skips extract_intent -> Saves 2.8k tokens!)
     if route_str == "general":
         return "general_chat"
 
-    # 3. SHOPPING / PRODUCT SEARCH -> Proceed to Intent Extraction
     return "extract_intent"
 
 
-# ── INTENT GATE FUNCTION (Search vs Checkout after slots extracted) ───────────
+# ── 2. INTENT GATE FUNCTION (Gate 2) ──────────────────────────────────────────
 def route_after_intent(state: ShoppingState) -> str:
     """
-    Evaluates extracted intent to branch to checkout session or catalog search.
+    Evaluates extracted intent and extracted slots:
+    - Checkout -> create_checkout_session
+    - Affirmation ('yes'/'sure' without product filters) -> fetch_featured
+    - Product Search (with color/size/category filters) -> search_products
     """
     raw_intent = state.get("intent")
-    intent_type = getattr(raw_intent, "intent", raw_intent)
-    intent_str = str(getattr(intent_type, "value", intent_type) or "").lower()
+    intent_val = getattr(raw_intent, "intent", raw_intent)
+    intent_str = str(getattr(intent_val, "value", intent_val) or "").lower()
+    last_action = state.get("last_bot_action")
 
+    # 1. Checkout link generation
     if intent_str == "checkout":
         return "create_checkout_session"
 
+    # 2. Check if user provided actual shopping filters
+    has_specific_filters = any([
+        getattr(raw_intent, "category", None),
+        getattr(raw_intent, "product_name", None),
+        getattr(raw_intent, "color", None),
+        getattr(raw_intent, "size", None),
+        getattr(raw_intent, "price_max", None)
+    ])
+
+    # 3. If previous turn offered alternatives and current query has NO specific filters (e.g. 'yes', 'sure', 'ha')
+    if last_action in ("offered_alternatives", "denied_oos") and not has_specific_filters:
+        print("[route_after_intent] Affirmation follow-up -> Branching to fetch_featured")
+        return "fetch_featured"
+
+    if intent_str == "recommend" and not has_specific_filters:
+        return "fetch_featured"
+
+    # 4. Default: Search DB for the requested product
     return "search_products"
 
 
-# 3. CONDITIONAL BRANCHING
+# ── 3. GRAPH INITIALIZATION & CONDITIONAL EDGES ──────────────────────────────
 # Gate 1: After Router & Context Decision
 graph.add_conditional_edges(
     "context_decision",
     route_post_sync,
     {
         "general_chat": "general_chat",
-        "fetch_featured": "fetch_featured",
         "extract_intent": "extract_intent",
     }
 )
@@ -1347,11 +1360,11 @@ graph.add_conditional_edges(
     {
         "create_checkout_session": "create_checkout_session",
         "search_products": "search_products",
+        "fetch_featured": "fetch_featured",
     }
 )
 
-
-# 4. TERMINAL EDGES (Dynamic response generation retained)
+# 4. TERMINAL EDGES
 graph.add_edge("search_products", "generate_response")
 graph.add_edge("create_checkout_session", "generate_response")
 graph.add_edge("fetch_featured", "generate_response")
@@ -1419,16 +1432,16 @@ workflow = graph.compile(checkpointer=memory)
 #     }
 # )
 
-# 4. TERMINAL EDGES
-graph.add_edge("search_products", "generate_response")
-graph.add_edge("create_checkout_session", "generate_response")
-graph.add_edge("fetch_featured", "generate_response")
-graph.add_edge("general_chat", END)
-graph.add_edge("generate_response", END)
+# # 4. TERMINAL EDGES
+# graph.add_edge("search_products", "generate_response")
+# graph.add_edge("create_checkout_session", "generate_response")
+# graph.add_edge("fetch_featured", "generate_response")
+# graph.add_edge("general_chat", END)
+# graph.add_edge("generate_response", END)
 
-# 5. COMPILE GRAPH
-memory = InMemorySaver()
-workflow = graph.compile(checkpointer=memory)
+# # 5. COMPILE GRAPH
+# memory = InMemorySaver()
+# workflow = graph.compile(checkpointer=memory)
 
 
 
