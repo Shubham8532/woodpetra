@@ -557,17 +557,20 @@ def context_decision(state: ShoppingState):
     DEcide whether o seacrh the database or answer using conversation context
     """
     # print(state)
-    intent = state['intent'].intent
+    raw_intent = state.get("intent")
+    
+    if raw_intent is not None:
+        intent = getattr(raw_intent, "intent", raw_intent)
+        if intent in (
+            IntentType.SEARCH,
+            IntentType.DETAILS,
+            IntentType.COMPARE,
+            IntentType.RECOMMEND
+        ):
+            return {
+                "context_route": ContextRoute.SEARCH
+            }
 
-    if intent in (
-        IntentType.SEARCH,
-        IntentType.DETAILS,
-        IntentType.COMPARE,
-        IntentType.RECOMMEND
-    ):
-        return {
-            "context_route": ContextRoute.SEARCH
-        }
     return {
         "context_route": ContextRoute.CONTEXT
     }
