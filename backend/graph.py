@@ -6,7 +6,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.runnables import RunnableConfig
 from langchain_core.output_parsers import PydanticOutputParser
 from langsmith import traceable
-from backend.config import llm_fast, llm_20B, llm_70B, llm_120B, supabase
+from backend.config import llm_20B, llm_120B, supabase
 # from langgraph.checkpoint.serde.types import ERROR_ON_UNHANDLED
 import warnings
 warnings.filterwarnings("ignore", message=".*Deserializing unregistered type.*")
@@ -95,15 +95,14 @@ razorpay_client = razorpay.Client(
     
 def invoke_with_fallback(messages, parser=None):
     """
-    1. Primary: 20B Model
-    2. Fallback 1: 120B Model (Only if 20B fails)
-    3. Fallback 2: 70B Model (Only if 120B fails)
+    1. Primary: 20B Model (Fast & Cheap)
+    2. Fallback: 120B Model (High Resilience Backup)
     """
     # ── TRY PRIMARY MODEL (20B) ──
     try:
         raw_res = llm_20B.invoke(messages)
         content = raw_res.content if hasattr(raw_res, 'content') else str(raw_res)
-        
+
         if parser:
             clean = content.replace("```json", "").replace("```", "").strip()
             return parser.parse(clean)
@@ -112,32 +111,19 @@ def invoke_with_fallback(messages, parser=None):
     except Exception as e1:
         print(f"[Primary 20B Failed: {e1}] -> Falling back to 120B...")
 
-    # ── TRY FALLBACK 1 (120B) ──
+    # ── TRY FALLBACK (120B) ──
     try:
         raw_res = llm_120B.invoke(messages)
         content = raw_res.content if hasattr(raw_res, 'content') else str(raw_res)
-        
+
         if parser:
             clean = content.replace("```json", "").replace("```", "").strip()
             return parser.parse(clean)
         return content
 
     except Exception as e2:
-        print(f"[Fallback 120B Failed: {e2}] -> Falling back to Llama 3.3 70B...")
-
-    # ── TRY FALLBACK 2 (70B) ──
-    try:
-        raw_res = llm_70B.invoke(messages)
-        content = raw_res.content if hasattr(raw_res, 'content') else str(raw_res)
-        
-        if parser:
-            clean = content.replace("```json", "").replace("```", "").strip()
-            return parser.parse(clean)
-        return content
-
-    except Exception as e3:
-        print(f"[ALL Models Failed]: {e3}")
-        raise e3
+        print(f"[ALL Fallback Models Failed]: {e2}")
+        raise e2
 
 
 # har naya question aane par pichle turn ke temporary search data ko clear karna
@@ -186,27 +172,23 @@ def router(state: ShoppingState):
     system_with_schema = f"{ROUTER_PROMPT}\n\nOUTPUT FORMAT:\nReturn ONLY a raw JSON object (no markdown, no extra text).\n{format_instructions}"
 
     try:
-        raw = llm_fast.invoke([
-            ("system", system_with_schema),
-            ("human", f"{context_hint}\nUser: {query}")
-        ])
-        clean = raw.content.replace("```json", "").replace("```", "").strip()
-        result = _router_parser.parse(clean)
+        result = invoke_with_fallback(
+            [
+                ("system", system_with_schema),
+                ("human", f"{context_hint}\nUser: {query}")
+            ],
+            parser=_router_parser
+        )
     except Exception as e:
-        print(f"[Router Parse Error: {e}]")
+        print(f"[Router Parse/LLM Error: {e}] -> Applying Smart Fallback")
         from backend.models import RouteType, RouterModel
-        # Smart Fallback: Agar bot ne pehle alternatives offer kiye the, toh 'shopping' assume karo (8B error par bhi Samosa loop fix!)
+        # Smart Fallback: Agar bot ne pehle alternatives offer kiye the, toh 'shopping' assume karo
         if last_bot_action in ("offered_alternatives", "denied_oos"):
             result = RouterModel(route=RouteType.SHOPPING)
         else:
             result = RouterModel(route=RouteType.GENERAL)
 
-    print(f"[Router] last_bot_action={last_bot_action!r}  route={result.route!r}")
-    return {
-        "route": result.route
-    }
-
-    print(f"[Router] last_bot_action={last_bot_action!r}  route={result.route!r}")
+    print(f"[Router] last_bot_action={last_bot_action!r} | route={result.route!r}")
     return {
         "route": result.route
     }
@@ -1257,20 +1239,28 @@ def fetch_featured(state: ShoppingState) -> ShoppingState:
         print(f"[fetch_featured error]: {e}")
         featured = []
 
-    # Inject a RECOMMEND intent so generate_response produces a showcase reply
-    featured_intent = ShoppingIntentModel(intent=IntentType.RECOMMEND)
+    # # Inject a RECOMMEND intent so generate_response produces a showcase reply
+    # featured_intent = ShoppingIntentModel(intent=IntentType.RECOMMEND)
+
+    #Instant response without making a second heavy 9s LLM call
+    text_reply = (
+        "Sure! Here are some of our top trending fashion picks for you across our catalog. "
+        "Tap any item to explore details!"
+    )
 
     return {
+        "response": text_reply,
         "products": featured,
+        "displayed_products": featured,
         "similar_products": [],
-        "intent": featured_intent,
+        "intent": "showed_products"
     }
 
 
 # ── GRAPH INITIALIZATION ──────────────────────────────────────────────────────
 graph = StateGraph(ShoppingState)
 
-# 1. ADD NODES
+# 1. NODES
 graph.add_node("reset_turn_slots", reset_turn_slots)      # Ephemeral slot reset pre-step
 graph.add_node("router", router)
 graph.add_node("general_chat", general_chat)
@@ -1281,74 +1271,146 @@ graph.add_node("create_checkout_session", create_checkout_session)
 graph.add_node("generate_response", generate_response)
 graph.add_node("fetch_featured", fetch_featured)          # Affirmative follow-up showcase node
 
-# 2. STEP 1: SERIAL PRE-STEP (Reset ephemeral slots before routing/extraction)
+# 2. Edges
 graph.add_edge(START, "reset_turn_slots")
 
-# STEP 2: PARALLEL FAN-OUT (Preserves speed & concurrency)
+# # STEP 2: PARALLEL FAN-OUT (Preserves speed & concurrency)
+# graph.add_edge("reset_turn_slots", "router")
+# graph.add_edge("reset_turn_slots", "extract_intent")
+
 graph.add_edge("reset_turn_slots", "router")
-graph.add_edge("reset_turn_slots", "extract_intent")
-
-# STEP 3: PARALLEL FAN-IN INTO CONTEXT_DECISION
 graph.add_edge("router", "context_decision")
-graph.add_edge("extract_intent", "context_decision")
 
-
-# ── PURE AI ROUTER GATE FUNCTION (ZERO MANUAL STRING MATCHING) ────────────────
 def route_post_sync(state: ShoppingState) -> str:
     """
-    Pure AI Gate Function:
-    Rely strictly on Router LLM output, Intent extraction, and Bot Action Signals.
-    No hardcoded frozensets, regex, or manual word matching!
+    Rely strictly on Router LLM output, state history, and Bot Action Signals.
+    Bypasses extract_intent on general banter and affirmative showcase.
     """
     route = state.get("route")
     route_str = str(getattr(route, "value", route) or "").lower()
 
     last_action = state.get("last_bot_action")
 
-    # Safe extraction of extracted intent
-    intent = state.get("intent")
-    intent_type = getattr(intent, "intent", intent)
-    intent_str = str(getattr(intent_type, "value", intent_type) or "").lower()
+    print(f"[route_post_sync] route={route_str!r} | last_action={last_action!r}")
 
-    print(f"[route_post_sync] route={route_str!r} | intent={intent_str!r} | last_action={last_action!r}")
-
-    # 1. EVALUATE CHECKOUT INTENT (Highest Priority)
-    if intent_str == "checkout":
-        return "create_checkout_session"
-
-    # 2. PURE AI AFFIRMATIVE FOLLOW-UP (No manual frozensets!)
-    # If bot previously offered alternatives/denied AND the AI Router classified current turn as 'shopping'
-    if last_action == "offered_alternatives" and route_str == "shopping":
+    # 1. PURE AI AFFIRMATIVE FOLLOW-UP ("Yes" / "Ha" after denial)
+    if last_action in ("offered_alternatives", "denied_oos") and route_str == "shopping":
         print("[route_post_sync] Pure AI Signal -> Branching to fetch_featured")
         return "fetch_featured"
 
-    # 3. EVALUATE GENERAL / BANTER ROUTE
+    # 2. GENERAL BANTER / GREETINGS (Skips extract_intent -> Saves 2.8k tokens!)
     if route_str == "general":
         return "general_chat"
 
-    # 4. EVALUATE CONTEXT DECISION ROUTE
-    context_route = state.get("context_route")
-    context_str = str(getattr(context_route, "value", context_route) or "").lower()
+    # 3. SHOPPING / PRODUCT SEARCH -> Proceed to Intent Extraction
+    return "extract_intent"
 
-    if context_str == "context":
-        return "generate_response"
 
-    # 5. DEFAULT SHOPPING FLOW
+# ── INTENT GATE FUNCTION (Search vs Checkout after slots extracted) ───────────
+def route_after_intent(state: ShoppingState) -> str:
+    """
+    Evaluates extracted intent to branch to checkout session or catalog search.
+    """
+    raw_intent = state.get("intent")
+    intent_type = getattr(raw_intent, "intent", raw_intent)
+    intent_str = str(getattr(intent_type, "value", intent_type) or "").lower()
+
+    if intent_str == "checkout":
+        return "create_checkout_session"
+
     return "search_products"
 
 
 # 3. CONDITIONAL BRANCHING
+# Gate 1: After Router & Context Decision
 graph.add_conditional_edges(
     "context_decision",
     route_post_sync,
     {
         "general_chat": "general_chat",
-        "create_checkout_session": "create_checkout_session",
-        "search_products": "search_products",
-        "generate_response": "generate_response",
         "fetch_featured": "fetch_featured",
+        "extract_intent": "extract_intent",
     }
 )
+
+# Gate 2: After Intent Extraction
+graph.add_conditional_edges(
+    "extract_intent",
+    route_after_intent,
+    {
+        "create_checkout_session": "create_checkout_session",
+        "search_products": "search_products",
+    }
+)
+
+
+# 4. TERMINAL EDGES (Dynamic response generation retained)
+graph.add_edge("search_products", "generate_response")
+graph.add_edge("create_checkout_session", "generate_response")
+graph.add_edge("fetch_featured", "generate_response")
+graph.add_edge("general_chat", END)
+graph.add_edge("generate_response", END)
+
+# 5. COMPILE GRAPH
+memory = InMemorySaver()
+workflow = graph.compile(checkpointer=memory)
+
+# # ── PURE AI ROUTER GATE FUNCTION (ZERO MANUAL STRING MATCHING) ────────────────
+# def route_post_sync(state: ShoppingState) -> str:
+#     """
+#     Pure AI Gate Function:
+#     Rely strictly on Router LLM output, Intent extraction, and Bot Action Signals.
+#     No hardcoded frozensets, regex, or manual word matching!
+#     """
+#     route = state.get("route")
+#     route_str = str(getattr(route, "value", route) or "").lower()
+
+#     last_action = state.get("last_bot_action")
+
+#     # Safe extraction of extracted intent
+#     intent = state.get("intent")
+#     intent_type = getattr(intent, "intent", intent)
+#     intent_str = str(getattr(intent_type, "value", intent_type) or "").lower()
+
+#     print(f"[route_post_sync] route={route_str!r} | intent={intent_str!r} | last_action={last_action!r}")
+
+#     # 1. EVALUATE CHECKOUT INTENT (Highest Priority)
+#     if intent_str == "checkout":
+#         return "create_checkout_session"
+
+#     # 2. PURE AI AFFIRMATIVE FOLLOW-UP (No manual frozensets!)
+#     # If bot previously offered alternatives/denied AND the AI Router classified current turn as 'shopping'
+#     if last_action == "offered_alternatives" and route_str == "shopping":
+#         print("[route_post_sync] Pure AI Signal -> Branching to fetch_featured")
+#         return "fetch_featured"
+
+#     # 3. EVALUATE GENERAL / BANTER ROUTE
+#     if route_str == "general":
+#         return "general_chat"
+
+#     # 4. EVALUATE CONTEXT DECISION ROUTE
+#     context_route = state.get("context_route")
+#     context_str = str(getattr(context_route, "value", context_route) or "").lower()
+
+#     if context_str == "context":
+#         return "generate_response"
+
+#     # 5. DEFAULT SHOPPING FLOW
+#     return "search_products"
+
+
+# # 3. CONDITIONAL BRANCHING
+# graph.add_conditional_edges(
+#     "context_decision",
+#     route_post_sync,
+#     {
+#         "general_chat": "general_chat",
+#         "create_checkout_session": "create_checkout_session",
+#         "search_products": "search_products",
+#         "generate_response": "generate_response",
+#         "fetch_featured": "fetch_featured",
+#     }
+# )
 
 # 4. TERMINAL EDGES
 graph.add_edge("search_products", "generate_response")

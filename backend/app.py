@@ -51,9 +51,28 @@ async def read_root():
 def health_check():
     return {"status": "ok", "message": "Shubham Fashion Assistant API is running"}
 
+
+GREETING_WORDS = {
+    "hi", "hii", "hiii", "hello", "hey", "helo", "hlo", "hola",
+    "good morning", "good afternoon", "good evening", "goodnight",
+    "gud morning", "gud mrng", "greetings", "namaste", "namaskar"
+}
+
 # 2. Chat API Endpoint
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
+    user_query = request.query.strip()
+    clean_text = "".join(ch for ch in user_query.lower() if ch.isalnum() or ch == " ")
+
+    # ── FAST-PATH: Standalone Greetings (0.00s Instant Response) ──
+    if clean_text in GREETING_WORDS:
+        return {
+            "response": "Hello! Welcome to Shubham Fashion. What apparel or style are you looking for today?",
+            "displayed_products": [],
+            "similar_products": []
+        }
+
+    # ── LangGraph Workflow Execution ──
     config = {
         "configurable": {
             "thread_id": request.thread_id
@@ -68,7 +87,6 @@ async def chat_endpoint(request: ChatRequest):
         "displayed_products": result.get("displayed_products", []),
         "similar_products": result.get("similar_products", [])
     }
-
 # --- 3. WHATSAPP WEBHOOK WORKER & ENDPOINTS ---
 
 async def process_whatsapp_message(user_text: str, from_number: str):
@@ -82,11 +100,7 @@ async def process_whatsapp_message(user_text: str, from_number: str):
 
         # FAST-PATH EXIT FOR STANDALONE GREETINGS ONLY
         clean_text = "".join(ch for ch in user_text.lower().strip() if ch.isalnum() or ch == " ")
-        GREETING_WORDS = {
-            "hi", "hii", "hiii", "hello", "hey", "helo", "hlo", "hola",
-            "good morning", "good afternoon", "good evening", "goodnight",
-            "gud morning", "gud mrng", "greetings", "namaste", "namaskar"
-        }
+        
 
         if clean_text in GREETING_WORDS:
             greet_payload = {
