@@ -276,6 +276,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 from backend.graph import workflow
+from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
 
 app = FastAPI(title="Shubham Fashion Assistant - Azure Production")
@@ -284,6 +285,10 @@ app = FastAPI(title="Shubham Fashion Assistant - Azure Production")
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "woodpetra_secret_token_123")
 ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+
+# Twilio Credentials (Fetched from Azure Configuration)
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 
 app.add_middleware(
     CORSMiddleware,
@@ -361,28 +366,27 @@ async def chat_endpoint(request: ChatRequest):
 
 @app.post("/webhook/twilio")
 async def twilio_webhook(
-    From: str = Form(...),      # e.g., "whatsapp:+918828600529"
+    From: str = Form(...),      # e.g., "whatsapp:+919082259228"
+    To: str = Form(...),        # e.g., "whatsapp:+17372508034"
     Body: str = Form(...)       # Message body from WhatsApp
 ):
     user_query = Body.strip()
     clean_text = "".join(ch for ch in user_query.lower() if ch.isalnum() or ch == " ")
 
-    twiml_resp = MessagingResponse()
-
-    # Fast-path for standalone greetings
+    # 1. Fast-path for standalone greetings
     if clean_text in GREETING_WORDS:
-        twiml_resp.message("Hello! Welcome to Shubham Fashion. What apparel or style are you looking for today?")
-        return Response(content=str(twiml_resp), media_type="application/xml")
+        bot_reply = "Hello! Welcome to Shubham Fashion. What apparel or style are you looking for today?"
+        displayed_products = []
+    else:
+        # 2. LangGraph workflow execution with sender-specific thread_id
+        thread_id = f"twilio_{From.replace(':', '_').replace('+', '')}"
+        config = {"configurable": {"thread_id": thread_id}}
+        result = workflow.invoke({"query": user_query}, config=config)
 
-    # LangGraph workflow execution with sender-specific thread_id
-    thread_id = f"twilio_{From.replace(':', '_').replace('+', '')}"
-    config = {"configurable": {"thread_id": thread_id}}
-    result = workflow.invoke({"query": user_query}, config=config)
+        bot_reply = result.get("response", "Sorry, I couldn't process that.")
+        displayed_products = result.get("displayed_products", [])
 
-    bot_reply = result.get("response", "Sorry, I couldn't process that.")
-    displayed_products = result.get("displayed_products", [])
-
-    # Format reply text and product list cleanly for WhatsApp chat
+    # 3. Format reply text and product list cleanly for WhatsApp chat
     reply_lines = [bot_reply]
     if displayed_products:
         reply_lines.append("\n🛍️ *Matching Items:*")
@@ -397,7 +401,25 @@ async def twilio_webhook(
             detail_str = f" ({' | '.join(details)})" if details else ""
             reply_lines.append(f"{idx}. *{title}*{detail_str}")
 
-    twiml_resp.message("\n".join(reply_lines))
+    final_message = "\n".join(reply_lines)
+
+    # 4. Explicit REST API Send for guaranteed delivery on Twilio trial numbers
+    if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
+        try:
+            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            client.messages.create(
+                body=final_message,
+                from_=To,
+                to=From
+            )
+            print(f"[Twilio REST] Message sent successfully to {From}")
+            return Response(content="<Response/>", media_type="application/xml")
+        except Exception as e:
+            print(f"[Twilio REST API Error]: {e}")
+
+    # 5. Fallback to TwiML response
+    twiml_resp = MessagingResponse()
+    twiml_resp.message(final_message)
     return Response(content=str(twiml_resp), media_type="application/xml")
 
 
