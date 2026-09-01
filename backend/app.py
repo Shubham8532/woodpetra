@@ -366,19 +366,17 @@ async def chat_endpoint(request: ChatRequest):
 
 @app.post("/webhook/twilio")
 async def twilio_webhook(
-    From: str = Form(...),      # e.g., "whatsapp:+919082259228"
-    To: str = Form(...),        # e.g., "whatsapp:+17372508034"
-    Body: str = Form(...)       # Message body from WhatsApp
+    From: str = Form(...),
+    Body: str = Form(...)
 ):
     user_query = Body.strip()
     clean_text = "".join(ch for ch in user_query.lower() if ch.isalnum() or ch == " ")
 
-    # 1. Fast-path for standalone greetings
+    # Standalone greeting check
     if clean_text in GREETING_WORDS:
         bot_reply = "Hello! Welcome to Shubham Fashion. What apparel or style are you looking for today?"
         displayed_products = []
     else:
-        # 2. LangGraph workflow execution with sender-specific thread_id
         thread_id = f"twilio_{From.replace(':', '_').replace('+', '')}"
         config = {"configurable": {"thread_id": thread_id}}
         result = workflow.invoke({"query": user_query}, config=config)
@@ -386,7 +384,7 @@ async def twilio_webhook(
         bot_reply = result.get("response", "Sorry, I couldn't process that.")
         displayed_products = result.get("displayed_products", [])
 
-    # 3. Format reply text and product list cleanly for WhatsApp chat
+    # Format text for WhatsApp
     reply_lines = [bot_reply]
     if displayed_products:
         reply_lines.append("\n🛍️ *Matching Items:*")
@@ -403,21 +401,7 @@ async def twilio_webhook(
 
     final_message = "\n".join(reply_lines)
 
-    # 4. Explicit REST API Send for guaranteed delivery on Twilio trial numbers
-    if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
-        try:
-            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-            client.messages.create(
-                body=final_message,
-                from_=To,
-                to=From
-            )
-            print(f"[Twilio REST] Message sent successfully to {From}")
-            return Response(content="<Response/>", media_type="application/xml")
-        except Exception as e:
-            print(f"[Twilio REST API Error]: {e}")
-
-    # 5. Fallback to TwiML response
+    # Return pure TwiML (No REST API call, no ContentSid error)
     twiml_resp = MessagingResponse()
     twiml_resp.message(final_message)
     return Response(content=str(twiml_resp), media_type="application/xml")
