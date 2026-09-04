@@ -1,4 +1,5 @@
 import os
+from unittest import result
 import razorpay
 from typing import List, Optional
 from langgraph.graph import StateGraph, START, END
@@ -7,6 +8,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.output_parsers import PydanticOutputParser
 from langsmith import traceable
 from backend.config import llm_20B, llm_120B, supabase
+from enum import Enum
 # from langgraph.checkpoint.serde.types import ERROR_ON_UNHANDLED
 import warnings
 warnings.filterwarnings("ignore", message=".*Deserializing unregistered type.*")
@@ -164,6 +166,33 @@ _router_parser = PydanticOutputParser(pydantic_object=RouterModel)
 
 @traceable(name="Router", description="Route the user query to the appropriate workflow path.")
 def router(state: ShoppingState):
+    """
+                    USER QUERY
+                        │
+                        ▼
+              ┌──────────────────┐
+              │      router      │
+              │                  │
+              │ query            │
+              │       +          │
+              │ last_bot_action  |
+              | (What bot did on |
+              |  previous turn)  |
+              |  none --> if not │
+              └────────┬─────────┘
+                       │
+                LLM + RouterModel
+                       │
+                 RouteType result
+                       │
+              ┌────────┴────────┐
+              ▼                 ▼
+          SHOPPING            GENERAL
+    (RouteType.SHOPPING)    (RouteType.GENERAL)
+              │                 │
+              ▼                 ▼
+      shopping workflow    general workflow
+    """
     query = state["query"]
     last_bot_action = state.get("last_bot_action") or "none"
     context_hint = f"Previous assistant action: {last_bot_action}"
@@ -177,7 +206,7 @@ def router(state: ShoppingState):
                 ("system", system_with_schema),
                 ("human", f"{context_hint}\nUser: {query}")
             ],
-            parser=_router_parser
+            parser=_router_parser  # LLM --> JSON --> RouterModel --> RouteType
         )
     except Exception as e:
         print(f"[Router Parse/LLM Error: {e}] -> Applying Smart Fallback")
@@ -189,17 +218,150 @@ def router(state: ShoppingState):
             result = RouterModel(route=RouteType.GENERAL)
 
     print(f"[Router] last_bot_action={last_bot_action!r} | route={result.route!r}")
+
+    ######################## Logging for debugging ##############
+
+    def log_router_state(query, last_bot_action, result):
+        route = result.route.value
+
+        print("\n" + "=" * 80)
+        print("ROUTER")
+        print("=" * 80)
+
+        print("\nINPUT")
+        print("-" * 80)
+        print(f"| {'Field':<20} | {'Value':<52} |")
+        print(f"|{'-' * 22}|{'-' * 54}|")
+        print(f"| {'query':<20} | {str(query):<52} |")
+        print(f"| {'last_bot_action':<20} | {str(last_bot_action):<52} |")
+
+        print("\nFLOW")
+        print("-" * 80)
+
+        print(
+            f"""
+            ┌──────────────────────────────────────────────┐
+            │ USER QUERY                                   │
+            │ {str(query):<44} │
+            └──────────────────────┬───────────────────────┘
+                                │
+                                ▼
+            ┌──────────────────────────────────────────────┐
+            │ ROUTER                                       │
+            │ query + last_bot_action                      │
+            └──────────────────────┬───────────────────────┘
+                                │
+                            route = {route}
+                                │
+                                ▼
+            ┌──────────────────────────────────────────────┐
+            │ {route.upper() + " WORKFLOW":<44} │
+            └──────────────────────────────────────────────┘
+            """
+        )
+
+        print("=" * 80)
+
+
+    log_router_state(
+        query=query,
+        last_bot_action=last_bot_action,
+        result=result,
+    )
+
+    ###########################
+
     return {
         "route": result.route
     }
 
 @traceable(name="Decide Route", description="Decide the next workflow path based on the router's output.")
 def decide_route(state: ShoppingState):
+    """
+    Read the route selected by the router and return it to the graph
+    so the workflow can continue through the corresponding branch.
+
+    INPUT:
+        - state["route"]
+
+    OUTPUT:
+        - "shopping" → shopping workflow
+        - "general"  → general workflow
+    """
     return state['route']
 
 
+######################## Logging for debugging (load_history()) ########################
+
+from datetime import datetime
+def log_load_history_state(
+    thread_id,
+    snapshots_found,
+    recent_snapshots,
+    history
+):
+    log_file = "history_ongoing.txt"
+
+    with open(log_file, "a", encoding="utf-8") as f:
+
+        f.write("\n" + "=" * 80 + "\n")
+        f.write("LOAD HISTORY\n")
+        f.write("=" * 80 + "\n")
+
+        f.write(f"\nTIME: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+        f.write("\nINPUT\n")
+        f.write("-" * 80 + "\n")
+        f.write(f"| {'Field':<25} | {'Value':<47} |\n")
+        f.write(f"|{'-' * 27}|{'-' * 49}|\n")
+        f.write(f"| {'thread_id':<25} | {str(thread_id):<47} |\n")
+        f.write(f"| {'snapshots_found':<25} | {str(snapshots_found):<47} |\n")
+        f.write(f"| {'snapshots_checked':<25} | {str(len(recent_snapshots)):<47} |\n")
+        f.write(f"| {'history_returned':<25} | {str(len(history)):<47} |\n")
+
+        f.write("\nHISTORY RETURNED\n")
+        f.write("-" * 80 + "\n")
+
+        if not history:
+            f.write("No conversation history found.\n")
+
+        else:
+            for i, values in enumerate(history, 1):
+
+                f.write(f"\nTURN {i}\n")
+                f.write("-" * 80 + "\n")
+
+                f.write("USER:\n")
+                f.write(f"  {values.get('query', '')}\n")
+
+                f.write("\nBOT:\n")
+                f.write(f"  {values.get('response', '')}\n")
+
+                f.write("\nOTHER STATE:\n")
+
+                for key, value in values.items():
+                    if key not in ("query", "response"):
+                        f.write(f"  {key}: {value}\n")
+
+        f.write("\n" + "=" * 80 + "\n")
+
+########################################################################
+
 @traceable(name="Load History", description="Load conversation history from the workflow's state history.")
 def load_history(config: RunnableConfig):
+    """
+    workflow.get_state_history(...)
+            ↓
+    saare checkpoints/snapshots milte hain
+            ↓
+    sirf latest 12 snapshots
+            ↓
+    jinme query + response nahi → skip
+            ↓
+    duplicate (same query + response) → skip
+            ↓
+    history return
+    """
     # print("here load_history")
 
     # print(config["configurable"])
@@ -225,9 +387,12 @@ def load_history(config: RunnableConfig):
     for snapshot in recent_snapshots:
         values = snapshot.values
 
+        # query + response dono hone chahiye
+        # Matlab incomplete state ignore.
         if not values.get("query") or not values.get("response"):
             continue
 
+        # duplicate query/response hataata hai
         key = (values["query"], values["response"])
 
         if key in seen:
@@ -236,22 +401,68 @@ def load_history(config: RunnableConfig):
         seen.add(key)
         history.append(values)
 
+##################### Logging Call ##################
+    log_load_history_state(
+        thread_id=config["configurable"]["thread_id"],
+        snapshots_found=len(snapshots),
+        recent_snapshots=recent_snapshots,
+        history=history
+    )
+
+    ########################################################
+
     return history
 
 
+##############  LOGGING (general_chat)  ##############
+def log_general_chat_llm_context(
+    query,
+    history,
+    history_text,
+    prompt,
+    system_prompt
+):
+    print("\n" + "=" * 80)
+    print("GENERAL CHAT — LLM CONTEXT")
+    print("=" * 80)
+
+    print("\nCURRENT QUERY")
+    print("-" * 80)
+    print(query)
+
+    print("\nHISTORY RECORDS")
+    print("-" * 80)
+    print(f"Records from load_history : {len(history)}")
+
+    print("\nCOMPACT HISTORY")
+    print("-" * 80)
+    print(history_text if history_text else "No conversation history.")
+
+    print("\nFINAL HUMAN PROMPT")
+    print("-" * 80)
+    print(prompt)
+
+    print("\nSYSTEM PROMPT")
+    print("-" * 80)
+    print(system_prompt)
+
+    print("\nPROMPT SIZE")
+    print("-" * 80)
+    print(f"History characters : {len(history_text)}")
+    print(f"Human prompt chars : {len(prompt)}")
+    print(f"System prompt chars: {len(system_prompt)}")
+
+    print("=" * 80)
+
+###########################
 
 # later update
 @traceable(name="General Chat", description="Handle general chat queries using conversation history.")
 def general_chat(state: ShoppingState, config: RunnableConfig):
-    # print("Workflow id:", id(workflow))
-    # print("Memory id:", id(memory))
-    # print(type(config))
-    # print(config)
-    # print(config["configurable"])
 
     history = load_history(config)
-
-    history_text = build_conversation(history)
+    # yaha par first return value history_text, second return value active_category
+    history_text, active_category = build_conversation(history)
 
     prompt = f"""Use conversation history to directly answer the user query.
 
@@ -287,6 +498,17 @@ Current User Query:
     print("HISTORY")
     pprint(history)
     print("=" * 80)
+
+    print ("above is in json format..and below is in structured format")
+    ################## LOGGING CALL ##################
+    log_general_chat_llm_context(
+        query=state["query"],
+        history=history,
+        history_text=history_text,
+        prompt=prompt,
+        system_prompt=GENERAL_CHAT_PROMPT,
+    )
+###########################################
 #     response = llm_fast.invoke(
 #     [
 #         (
@@ -364,6 +586,48 @@ Current User Query:
     }
 
 
+############# LOGGING (build_conversation) ########################
+def log_build_conversation_state(
+    history,
+    max_turns,
+    history_text,
+    active_category
+):
+    print("\n" + "=" * 80)
+    print("BUILD CONVERSATION")
+    print("=" * 80)
+
+    print("\nINPUT")
+    print("-" * 80)
+    print(f"History records received : {len(history)}")
+    print(f"Max turns                : {max_turns}")
+
+    print("\nPROCESSING")
+    print("-" * 80)
+    print("• Reads history newest → oldest")
+    print("• Finds latest non-null category")
+    print("• Removes repeated queries")
+    print("• Cleans UI text from responses")
+    print("• Truncates responses to 120 characters")
+    print(f"• Keeps maximum {max_turns} turns")
+    print("• Reverses final order to oldest → newest")
+
+    print("\nOUTPUT")
+    print("-" * 80)
+    print(f"Active category: {active_category}")
+
+    print("\nHISTORY TEXT GIVEN TO LLM")
+    print("-" * 80)
+
+    if history_text:
+        print(history_text)
+    else:
+        print("No conversation history.")
+
+    print("=" * 80)
+
+########################################
+
 @traceable(name="Build Conversation", description="Convert LangGraph checkpoints into a clean conversation history.")
 def build_conversation(history, max_turns=3):
     """
@@ -411,6 +675,15 @@ def build_conversation(history, max_turns=3):
     conversation.reverse()  # Reverse to get Oldest -> Newest
 
     history_text = "\n\n".join(conversation)
+
+    ############# LOGGING CALL ##############
+    log_build_conversation_state(
+        history=history,
+        max_turns=max_turns,
+        history_text=history_text,
+        active_category=active_category
+    )
+    ##################
     return history_text, active_category
 
 
@@ -545,16 +818,244 @@ CONTEXT & ATTRIBUTES:
         "price_max": result.price_max,
     }
 
+
+        ######################## Logging for debugging ##############
+
+    def log_intent_state(
+        query,
+        active_category,
+        result,
+        turn_slots_dict,
+        previous_turn_slots
+    ):
+        print("\n" + "=" * 80)
+        print("EXTRACT INTENT")
+        print("=" * 80)
+
+        # ======================== INPUT ========================
+
+        print("\nINPUT")
+        print("-" * 80)
+        print(f"| {'Field':<20} | {'Value':<52} |")
+        print(f"|{'-' * 22}|{'-' * 54}|")
+
+        print(f"| {'query':<20} | {str(query):<52} |")
+        print(f"| {'active_category':<20} | {str(active_category):<52} |")
+
+        # ======================== OUTPUT ========================
+
+        print("\nSHOPPING INTENT")
+        print("-" * 80)
+
+        fields = [
+            "intent",
+            "keyword",
+            "category",
+            "product_name",
+            "color",
+            "material",
+            "size",
+            "fit",
+            "brands",
+            "gender",
+            "price_min",
+            "price_max",
+            "sort",
+            "occasion",
+        ]
+
+        turn_slot_fields = {
+            "product_name",
+            "category",
+            "keyword",
+            "color",
+            "size",
+            "price_min",
+            "price_max",
+        }
+
+        # First extraction:
+        # Only show what ShoppingIntentModel produced.
+        if previous_turn_slots is None:
+
+            print(
+                f"| {'Field':<20} | "
+                f"{'ShoppingIntentModel':<52} |"
+            )
+            print(
+                f"|{'-' * 22}|"
+                f"{'-' * 54}|"
+            )
+
+            for field in fields:
+
+                value = getattr(result, field)
+
+                if isinstance(value, Enum):
+                    value = value.value
+
+                print(
+                    f"| {field:<20} | "
+                    f"{str(value):<52} |"
+                )
+
+        # Later extraction:
+        # Show model output + what state had before + new turn_slots.
+        else:
+
+            print(
+                f"| {'Field':<20} | "
+                f"{'ShoppingIntentModel':<25} | "
+                f"{'Previous':<20} | "
+                f"{'Current turn_slots':<20} |"
+            )
+
+            print(
+                f"|{'-' * 22}|"
+                f"{'-' * 27}|"
+                f"{'-' * 22}|"
+                f"{'-' * 22}|"
+            )
+
+            for field in fields:
+
+                model_value = getattr(result, field)
+
+                if isinstance(model_value, Enum):
+                    model_value = model_value.value
+
+                if field in turn_slot_fields:
+                    previous_value = previous_turn_slots.get(field)
+                    current_value = turn_slots_dict.get(field)
+                else:
+                    previous_value = "—"
+                    current_value = "—"
+
+                print(
+                    f"| {field:<20} | "
+                    f"{str(model_value):<25} | "
+                    f"{str(previous_value):<20} | "
+                    f"{str(current_value):<20} |"
+                )
+
+        # ======================== STATE OUT ========================
+
+        print("\nSTATE OUT")
+        print("-" * 80)
+        print("| intent      → ShoppingIntentModel")
+        print("| turn_slots  → turn_slots_dict")
+        print("=" * 80)
+
+
+    # Logger only READS the existing state.
+    log_intent_state(
+        query=query,
+        active_category=active_category,
+        result=result,
+        turn_slots_dict=turn_slots_dict,
+        previous_turn_slots=state.get("turn_slots"),
+    )
+    ###########################
+
     return {
         "intent": result,
         "turn_slots": turn_slots_dict,
     }
+
+######### Debugging: Context Decision Logging ########
+
+def log_context_decision_state(intent, context_route):
+
+    route = context_route.value
+
+    if route == "search":
+        next_branch = "EXTRACT INTENT"
+    else:
+        next_branch = "CONTEXT BRANCH"
+
+    print("\n" + "=" * 80)
+    print("CONTEXT DECISION")
+    print("=" * 80)
+
+    print("\nINPUT")
+    print("-" * 80)
+    print(f"| {'Field':<20} | {'Value':<52} |")
+    print(f"|{'-' * 22}|{'-' * 54}|")
+    print(f"| {'intent':<20} | {str(intent):<52} |")
+
+    print("\nFLOW")
+    print("-" * 80)
+
+    print(
+        f"""
+        ┌──────────────────────────────────────────────┐
+        │ SHOPPING WORKFLOW                            │
+        └──────────────────────┬───────────────────────┘
+                               │
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │ CONTEXT DECISION                             │
+        │                                              │
+        │ intent = {str(intent):<32} │
+        └──────────────────────┬───────────────────────┘
+                               │
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │ CONTEXT ROUTE                                │
+        │                                              │
+        │ route = {route:<35} │
+        ⚠️ CURRENT ARCHITECTURE — context_route may be invalid
+        └──────────────────────┬───────────────────────┘
+                               │
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │ NEXT STEP                                    │
+        │                                              │
+        │ {next_branch:<44} │
+        └──────────────────────────────────────────────┘
+        """
+    )
+
+    print("\nOUTPUT")
+    print("-" * 80)
+    print(f"| {'Field':<20} | {'Value':<52} |")
+    print(f"|{'-' * 22}|{'-' * 54}|")
+    print(f"| {'context_route':<20} | {route:<52} |")
+
+    print("=" * 80)
+
+##############################
 
 
 @traceable(name="Context Decision", description="Decide whether to search the database or answer using conversation context.")
 def context_decision(state: ShoppingState):
     """
     DEcide whether o seacrh the database or answer using conversation context
+
+                        SHOPPING WORKFLOW
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │   CONTEXT DECISION   │
+                    │                      │
+                    │   state["intent"]    │
+                    └──────────┬───────────┘
+                               │
+                         Check intent
+                               │
+                 ┌─────────────┴─────────────┐
+                 │                           │
+                 ▼                           ▼
+          SEARCH-type intent          Other intent
+      SEARCH / DETAILS /            GENERAL / other
+      COMPARE / RECOMMEND                 │
+                 │                        │
+                 ▼                        ▼
+       context_route=SEARCH      context_route=CONTEXT
+                 │                        │
+                 ▼                        ▼
+          Search database          Use conversation
+                                     context
     """
     # print(state)
     raw_intent = state.get("intent")
@@ -567,13 +1068,39 @@ def context_decision(state: ShoppingState):
             IntentType.COMPARE,
             IntentType.RECOMMEND
         ):
+            ######################### Logging for debugging ##############
+            context_route = ContextRoute.SEARCH
+            log_context_decision_state(
+                intent=intent,
+                context_route=context_route
+            )
             return {
-                "context_route": ContextRoute.SEARCH
+                "context_route": context_route
             }
+            
+            # Temporarily disabled for logging otherwise use this
+            # return {
+            #     "context_route": ContextRoute.SEARCH
+            # }
+
+    context_route = ContextRoute.CONTEXT
+
+    # Debugging only
+    log_context_decision_state(
+        intent=raw_intent,
+        context_route=context_route
+    )
 
     return {
-        "context_route": ContextRoute.CONTEXT
+        "context_route": context_route
     }
+
+    # Temporarily disabled for logging otherwise use this
+    # return {
+    #     "context_route": ContextRoute.CONTEXT
+    # }
+
+
     # # imporve later
     # if (
     #     intent.category is None
@@ -592,8 +1119,246 @@ def context_decision(state: ShoppingState):
 
 @traceable(name="Decide Context", description="Decide the next workflow path based on the context decision's output.")
 def decide_context(state: ShoppingState):
+    """
+    context_decision
+       │
+       │ produces
+       ▼
+    context_route
+       │
+       ▼
+    decide_context
+       │
+       ├──────── SEARCH ───────→ Search branch
+       │
+       └──────── CONTEXT ──────→ Context branch
+
+    Read the context route selected by context_decision
+    and return it to the graph for branching.
+
+    INPUT:
+        - state["context_route"]
+
+    OUTPUT:
+        - "search"  → search workflow
+        - "context" → conversation context workflow
+    """
+
     return state['context_route']
 
+########################## LOGGING (search_product) ##########################
+
+import time
+from datetime import datetime
+from pathlib import Path
+
+
+RETRIEVED_PRODUCTS_LOG = Path("retrieved_products.txt")
+
+
+def log_search(message="", *, handle=None):
+    """
+    Write one log message to retrieved_products.txt.
+
+    Logging must NEVER affect search_product().
+    Any logging-related error is silently ignored.
+    """
+
+    try:
+
+        if handle is not None:
+            handle.write(message + "\n")
+            handle.flush()
+            return
+
+        with RETRIEVED_PRODUCTS_LOG.open("a", encoding="utf-8") as f:
+            f.write(message + "\n")
+
+    except Exception:
+        pass
+
+
+def _log_timestamp():
+    try:
+        return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    except Exception:
+        return "UNKNOWN-TIME"
+
+
+def _log_elapsed(start_time):
+    try:
+        return f"{(time.perf_counter() - start_time) * 1000:.1f} ms"
+    except Exception:
+        return "UNKNOWN"
+
+
+def log_search_step(
+    handle,
+    step,
+    description,
+    start_time,
+    result_count=None
+):
+    """
+    Log one investigation step.
+
+    Logging failures are ignored so the actual search logic
+    can never be affected.
+    """
+
+    try:
+
+        elapsed = _log_elapsed(start_time)
+
+        if result_count is None:
+
+            log_search(
+                f"[{_log_timestamp()}] {step} | "
+                f"{description} | "
+                f"elapsed={elapsed}",
+                handle=handle
+            )
+
+        else:
+
+            log_search(
+                f"[{_log_timestamp()}] {step} | "
+                f"{description} | "
+                f"results={result_count} | "
+                f"elapsed={elapsed}",
+                handle=handle
+            )
+
+    except Exception:
+        pass
+
+
+def log_product_table(
+    products,
+    handle,
+    title,
+    limit=None
+):
+    """
+    Write retrieved products in a compact table.
+
+    Does NOT dump the complete product JSON.
+    """
+
+    try:
+
+        log_search("", handle=handle)
+        log_search(title, handle=handle)
+        log_search("-" * 100, handle=handle)
+
+        if not products:
+
+            log_search(
+                "Count: 0",
+                handle=handle
+            )
+
+            return
+
+        log_search(
+            f"Count: {len(products)}",
+            handle=handle
+        )
+
+        rows = products if limit is None else products[:limit]
+
+        log_search(
+            f"{'SKU':<14}"
+            f"{'NAME':<30}"
+            f"{'CATEGORY':<16}"
+            f"{'COLOR':<14}"
+            f"{'SIZE':<8}"
+            f"{'PRICE':>10}",
+            handle=handle
+        )
+
+        log_search("-" * 92, handle=handle)
+
+        for product in rows:
+
+            sku = str(
+                product.get("sku", "")
+            )[:13]
+
+            name = str(
+                product.get("name", "")
+            )[:29]
+
+            category = str(
+                product.get("category", "")
+            )[:15]
+
+            color = str(
+                product.get("color", "")
+            )[:13]
+
+            size = str(
+                product.get("size", "")
+            )[:7]
+
+            price = str(
+                product.get("price", "")
+            )
+
+            log_search(
+                f"{sku:<14}"
+                f"{name:<30}"
+                f"{category:<16}"
+                f"{color:<14}"
+                f"{size:<8}"
+                f"{price:>10}",
+                handle=handle
+            )
+
+        if limit is not None and len(products) > limit:
+
+            log_search(
+                f"... {len(products) - limit} more products "
+                f"not displayed",
+                handle=handle
+            )
+
+    except Exception:
+        pass
+
+
+def log_search_query(
+    handle,
+    step,
+    query_description,
+    products,
+    start_time
+):
+    """
+    Convenience logger for a database query.
+    """
+
+    try:
+
+        log_search_step(
+            handle,
+            step,
+            query_description,
+            start_time,
+            len(products)
+        )
+
+        log_product_table(
+            products,
+            handle,
+            f"{step} RESULTS",
+            limit=20
+        )
+
+    except Exception:
+        pass
+
+#######################################################
 
 @traceable(name="Search Product", description="Query Supabase using the extracted shopping intent with a 2-Tier strategy and smart fallbacks.")
 def search_product(state: ShoppingState) -> ShoppingState:
@@ -602,10 +1367,123 @@ def search_product(state: ShoppingState) -> ShoppingState:
     Uses a 2-Tier strategy (Specific Product Name Search vs. General Category/Keyword Filtering)
     with smart fallbacks, plus a recommendation query for similar products.
     """
-    
+
+    ############### LOGGING CALL ##############
+    search_start = time.perf_counter()
+
+    # Open ONE log block for this search invocation.
+    # Everything related to this search goes inside it.
+    try:
+        search_log_handle = RETRIEVED_PRODUCTS_LOG.open(
+            "a",
+            encoding="utf-8"
+        )
+
+    except Exception:
+        search_log_handle = None
+
+    log_search("", handle=search_log_handle)
+
+    log_search(
+        "=" * 100,
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"SEARCH PRODUCT | "
+        f"started={datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        "=" * 100,
+        handle=search_log_handle
+    )
+
+    ################################
+
+
     # Extract the structured intent object from LangGraph state
     intent = state['intent']
     raw_query = state.get('query', '').lower()
+
+#################### AGAIN LOGGING CALL --> ####################
+    log_search(
+        "RAW USER QUERY",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Query: {raw_query}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        "",
+        handle=search_log_handle
+    )
+
+    log_search(
+        "SEARCH FILTERS",
+        handle=search_log_handle
+    )
+
+    log_search(
+        "-" * 80,
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Product Name   : {intent.product_name}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Category       : {intent.category}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Keyword        : {intent.keyword}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Color          : {intent.color}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Size           : {intent.size}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Price Min      : {intent.price_min}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Price Max      : {intent.price_max}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Sort           : {getattr(intent, 'sort', None)}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Intent Type    : {getattr(intent, 'intent', None)}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        "-" * 80,
+        handle=search_log_handle
+    )
+
+    ###################################################################
 
     # # STEP 0: KEYWORD TO CATEGORY NORMALIZATION
     # # Converts plural/synonym keywords ("tshirts", "tees", "pants") to exact DB categories if category is missing
@@ -640,8 +1518,63 @@ def search_product(state: ShoppingState) -> ShoppingState:
         getattr(intent, 'brands', None) or getattr(intent, 'brand', None)
     ]) or getattr(intent, 'intent', None) in ["search", "browse", "recommend", "general"]
 
+
+    ###################### AGAIN LOGGING CALL --> log safety check ##############
+    log_search_step(
+        search_log_handle,
+        "SAFETY CHECK",
+        f"Usable search filter detected: {has_filter}",
+        search_start
+    )
+    log_search(
+        f"Investigation: product_name={bool(intent.product_name)}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Investigation: category={bool(intent.category)}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Investigation: keyword={bool(intent.keyword)}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Investigation: color={bool(intent.color)}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Investigation: size={bool(intent.size)}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Investigation: price_min={intent.price_min is not None}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Investigation: price_max={intent.price_max is not None}",
+        handle=search_log_handle
+    )
+    #######################################
+    
     # If NO filter was extracted, stop immediately to prevent pulling all rows from DB
     if not has_filter:
+
+        #################### AGAIN LOGGING CALL ################
+        log_search_step(
+            search_log_handle,
+            "SAFETY CHECK",
+            "No usable filters detected",
+            search_start,
+            0
+        )
+        #########################################
+
         print("Extracted Intent:", intent)
         print("Product Name:", intent.product_name)
         print("Category:", intent.category)
@@ -653,17 +1586,83 @@ def search_product(state: ShoppingState) -> ShoppingState:
     
     products = []
 
+    ######################### AGAIN LOGGING CALL ###############
+    log_search(
+        "Investigation: safety check passed → database search is allowed.",
+        handle=search_log_handle
+    )
+    ##############################
+
     # TIER 1: THE USER ASKED FOR A SPECIFIC PRODUCT BY NAME
     # Example: "Do you have CloudWarm Hoodie in Navy size XL?"
     if intent.product_name:
+
+        ################ LOGGING CALL #################
+        log_search_step(
+            search_log_handle,
+            "TIER 1",
+            f"Specific product search selected | product_name='{intent.product_name}'",
+            search_start
+        )
+
+        log_search(
+            "Investigation: product_name exists → entering strict product-name search.",
+            handle=search_log_handle
+        )
+        #############################################
         strict_query = (
             supabase.table("products")
             .select("*")
             .ilike("name", f"%{intent.product_name}%")
         )
 
+        #################### LOGGING CALL ###############
+        log_search(
+            "Investigation: base query created.",
+            handle=search_log_handle
+        )
+
+        log_search(
+            f"Investigation: table=products",
+            handle=search_log_handle
+        )
+
+        log_search(
+            f"Investigation: SELECT=*",
+            handle=search_log_handle
+        )
+
+        log_search(
+            f"Investigation: name ILIKE '%{intent.product_name}%'",
+            handle=search_log_handle
+        )
+
+        log_search_step(
+            search_log_handle,
+            "TIER 1 → BUILD STRICT QUERY",
+            (
+                f"name contains '{intent.product_name}'"
+                f" | color={intent.color}"
+                f" | size={intent.size}"
+            ),
+            search_start
+        )
+        #######################################
+
         if intent.color:
+            ################### LOGGING CALL ###############
+            log_search(
+                f"Investigation: COLOR filter detected → applying color='{intent.color}'",
+                handle=search_log_handle
+            )
+            #############################################
             strict_query = strict_query.ilike("color", intent.color.capitalize())  
+            ################# AGAIN LOGGING CALL ############
+            log_search(
+                f"Investigation: query now contains color ILIKE '{intent.color.capitalize()}'",
+                handle=search_log_handle
+            )
+            ########################################
 
         if intent.size:
             size_val = (
@@ -671,12 +1670,66 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 if hasattr(intent.size, "value")
                 else intent.size
             )
+            ############# LOGGING CALL #################
+            log_search(
+                f"Investigation: SIZE filter detected → resolved size='{size_val}'",
+                handle=search_log_handle
+            )
+            ##########################################
             strict_query = strict_query.eq("size", size_val)
+        ###################### AGAIN LOGGING CALL ###########
+            log_search(
+                f"Investigation: query now contains size='{size_val}'",
+                handle=search_log_handle
+            )
 
+
+        log_search(
+            "Investigation: executing TIER 1 strict database query NOW.",
+            handle=search_log_handle
+        )
+        ##############################################
         products = strict_query.execute().data
+        #################### AGAIN LOGGING CALL ############
+        log_search(
+            "Investigation: TIER 1 strict database query completed.",
+            handle=search_log_handle
+        )
+
+        log_search_query(
+            search_log_handle,
+            "TIER 1 → STRICT QUERY",
+            (
+                f"Product name='{intent.product_name}'"
+                f" | color={intent.color}"
+                f" | size={intent.size}"
+            ),
+            products,
+            search_start
+        )
+        #############################################
 
         # --- FALLBACK 1: PRODUCT EXISTS, BUT NOT IN THAT COLOR OR SIZE ---
+        
         if not products:
+            ###################### LOGGING CALL ##################
+            log_search_step(
+                search_log_handle,
+                "TIER 1 → FALLBACK 1",
+                "Strict product search returned 0 results → removing color/size restrictions",
+                search_start,
+                0
+            )
+            log_search(
+                "Investigation: product-name search produced ZERO results.",
+                handle=search_log_handle
+            )
+
+            log_search(
+                "Investigation: removing color and size restrictions.",
+                handle=search_log_handle
+            )
+            ##################################################
             products = (
                 supabase
                 .table("products")
@@ -686,55 +1739,268 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 .data
             )
 
+            ################## LOG CALL ####################
+            ################ FALLBACK 1 RESULT ################
+
+            log_search_query(
+                search_log_handle,
+                "TIER 1 → FALLBACK 1",
+                (
+                    f"Searching product name='{intent.product_name}'"
+                    " without requested color/size"
+                ),
+                products,
+                search_start
+            )
+            ##################################
+            
         # --- FALLBACK 2: SEARCH OTHER PRODUCTS IN THE SAME CATEGORY OR KEYWORD ---
         if not products and (intent.category or intent.keyword):
+            ################### AGAIN LOGGING CALL ################
+            log_search_step(
+                search_log_handle,
+                "TIER 1 → FALLBACK 2",
+                (
+                    "Product-name fallback still returned 0"
+                    f" | category={intent.category}"
+                    f" | keyword={intent.keyword}"
+                    " → searching alternatives"
+                ),
+                search_start,
+                0
+            )
+            ###################################
             alt_query = supabase.table("products").select("*")
+
+            ################## AGAIN LOGGING CALL ############
+            log_search(
+                "Investigation: alternative query created.",
+                handle=search_log_handle
+            )
+            ############################################
+
             if intent.category:
+                ################ LOGGING CALL ############
+                log_search(
+                    f"Investigation: FALLBACK 2 using CATEGORY = {intent.category}",
+                    handle=search_log_handle
+                )
+                ########################################
                 alt_query = alt_query.eq("category", intent.category)
+
             elif intent.keyword:
                 kw_term = intent.keyword.strip()
+                #################### LOGGING CALL ################
+                log_search(
+                    f"Investigation: FALLBACK 2 using KEYWORD = {kw_term}",
+                    handle=search_log_handle
+                )
+                ##################################################
                 alt_query = alt_query.or_(f"name.ilike.%{kw_term}%,description.ilike.%{kw_term}%,category.ilike.%{kw_term}%")
 
             if intent.color:
+                ##################### LOGGING CALL #############
+                log_search(
+                    f"Investigation: FALLBACK 2 applying COLOR = {intent.color}",
+                    handle=search_log_handle
+                )
+                ################################
                 alt_query = alt_query.ilike("color", intent.color.capitalize())
 
             if intent.size:
                 size_val = intent.size.value if hasattr(intent.size, "value") else intent.size
+                #################### LOGGING CALL ################
+                log_search(
+                    f"Investigation: FALLBACK 2 applying SIZE = {size_val}",
+                    handle=search_log_handle
+                )
+                ##########################################
                 alt_query = alt_query.eq("size", size_val)
-
+            #################### AGAIN LOGGING CALL ##########
+            log_search(
+                "Investigation: executing TIER 1 FALLBACK 2 database query NOW.",
+                handle=search_log_handle
+            )
+            #######################################
             products = alt_query.execute().data
+
+            ######################### AGAIN LOGGING CALL ###########
+            log_search(
+                "Investigation: TIER 1 FALLBACK 2 database query completed.",
+                handle=search_log_handle
+            )
+            ######################################
+
+            #################### LOGGING CALL ###############
+            ################ FALLBACK 2 RESULT ################
+
+            log_search_query(
+                search_log_handle,
+                "TIER 1 → FALLBACK 2",
+                (
+                    f"Alternative search"
+                    f" | category={intent.category}"
+                    f" | keyword={intent.keyword}"
+                    f" | color={intent.color}"
+                    f" | size={intent.size}"
+                ),
+                products,
+                search_start
+            )
+            #####################################################
 
     # TIER 2: GENERAL CATEGORY & ATTRIBUTE FILTERING
     # Used when user asks for general items like: "Show me black hoodies under 1500"
     else:
+        ############## LOGGING CALL ####################
+        log_search_step(
+            search_log_handle,
+            "TIER 2",
+            "No specific product_name → entering general category/attribute search",
+            search_start
+        )
+        #################################################
         query = supabase.table("products").select("*")
         clean_kw = intent.keyword.strip() if intent.keyword else ""
 
+        ############### AGAIN LOGGING CALL ###########
+        log_search(
+            f"Investigation: clean keyword = '{clean_kw}'",
+            handle=search_log_handle
+        )
+        #########################################
+
         if intent.category:
+            ######################## LOGGING CALL ###########
+            log_search(
+                f"Investigation: applying CATEGORY filter = {intent.category}",
+                handle=search_log_handle
+            )
+            ##################################################
             query = query.eq("category", intent.category)
+
         elif intent.keyword:
+            ####################### AGAIN LOGGING CALL ##########
+            log_search(
+                f"Investigation: applying KEYWORD filter = {clean_kw}",
+                handle=search_log_handle
+            )
+            ##########################################
+            
             query = query.or_(f"name.ilike.%{clean_kw}%,description.ilike.%{clean_kw}%,category.ilike.%{clean_kw}%")
 
         if intent.color:
+            ##################### LOGGING CALL ################
+            log_search(
+                f"Investigation: applying COLOR filter = {intent.color}",
+                handle=search_log_handle
+            )
+            ###############################
             query = query.ilike("color", intent.color.capitalize())
 
         if intent.size:
             size_val = intent.size.value if hasattr(intent.size, "value") else intent.size
+            ################ LOGGING CALL ##################
+            log_search(
+                f"Investigation: applying SIZE filter = {size_val}",
+                handle=search_log_handle
+            )
+            ############################################
             query = query.eq("size", size_val)
 
         if intent.price_min is not None:
+            ################ LOGGING CALL ##################
+            log_search(
+                f"Investigation: applying PRICE MIN = {intent.price_min}",
+                handle=search_log_handle
+            )
+            ###########################################
             query = query.gte("price", intent.price_min)
 
         if intent.price_max is not None:
+            ################ LOGGING CALL ##################
+            log_search(
+                f"Investigation: applying PRICE MAX = {intent.price_max}",
+                handle=search_log_handle
+            )
+            ###########################################
             query = query.lte("price", intent.price_max)
 
         query = query.order("price", desc=False)
+
+        ################ LOGGING CALL ##################
+        log_search_step(
+            search_log_handle,
+            "TIER 2 → PRIMARY QUERY",
+            (
+                f"category={intent.category}"
+                f" | keyword={clean_kw}"
+                f" | color={intent.color}"
+                f" | size={intent.size}"
+                f" | price_min={intent.price_min}"
+                f" | price_max={intent.price_max}"
+                " | order=price ASC"
+            ),
+            search_start
+        )
+
+        log_search(
+            "Investigation: executing TIER 2 PRIMARY database query NOW.",
+            handle=search_log_handle
+        )
+        ###########################################
         products = query.execute().data
-##############################
+
+        ####################### AGAIN LOGGING CALL ############
+        log_search(
+            "Investigation: TIER 2 PRIMARY database query completed.",
+            handle=search_log_handle
+        )
+        #######################################
+
+        ############### CALL LOG ##############
+        ################ TIER 2 PRIMARY RESULT ################
+
+        log_search_query(
+            search_log_handle,
+            "TIER 2 → PRIMARY QUERY",
+            (
+                f"General filtered search"
+                f" | category={intent.category}"
+                f" | keyword={clean_kw}"
+                f" | color={intent.color}"
+                f" | size={intent.size}"
+                f" | price_min={intent.price_min}"
+                f" | price_max={intent.price_max}"
+            ),
+            products,
+            search_start
+        )
+        ##############################
+
         # --- FALLBACK 1: STRICT CATEGORY PRESERVATION ---
         # If requested color/size/budget yielded 0 items, keep category STRICT!
         # Fetch ALL items in that category so user sees alternative colors/sizes (e.g., non-orange T-Shirts)
         if not products and intent.category:
+
+            ################ AGAIN LOGGING CALL #############
+            log_search_step(
+                search_log_handle,
+                "TIER 2 → FALLBACK 1",
+                (
+                    f"Primary query returned 0"
+                    f" | preserving category='{intent.category}'"
+                    " | removing other restrictions"
+                ),
+                search_start,
+                0
+            )
+
+            log_search(
+                "Investigation: executing category-preservation fallback.",
+                handle=search_log_handle
+            )
+            ###################################
             products = (
                 supabase.table("products")
                 .select("*")
@@ -743,10 +2009,39 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 .execute()
                 .data
             )
+            ################### AGAIN LOGGING CALL ###########
+            log_search_query(
+                search_log_handle,
+                "TIER 2 → FALLBACK 1",
+                f"Category-only search | category={intent.category}",
+                products,
+                search_start
+            )
+            #################################
 
         # --- FALLBACK 2: COLOR MATCH (WHEN NO CATEGORY SPECIFIED) ---
         # If user asked for a color with no specific category match, fetch items matching requested color
         if not products and intent.color:
+
+            ################# AGAIN LOGGING CALL ############
+            log_search_step(
+                search_log_handle,
+                "TIER 2 → FALLBACK 2",
+                (
+                    "No products from previous search"
+                    f" | category={intent.category}"
+                    f" | searching color='{intent.color}'"
+                ),
+                search_start,
+                0
+            )
+
+            log_search(
+                "Investigation: executing color-only fallback.",
+                handle=search_log_handle
+            )
+            #########################################
+
             products = (
                 supabase.table("products")
                 .select("*")
@@ -755,9 +2050,37 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 .execute()
                 .data
             )
+            ################ AGAIN LOGGING CALL ##########
+            log_search_query(
+                search_log_handle,
+                "TIER 2 → FALLBACK 2",
+                f"Color-only search | color={intent.color}",
+                products,
+                search_start
+            )
+            #####################################
 
         # --- FALLBACK 3: KEYWORD SEARCH ---
         if not products and intent.keyword:
+            ################### AGAIN LOGGING CALL ############
+            log_search_step(
+                search_log_handle,
+                "TIER 2 → FALLBACK 3",
+                (
+                    "No products from previous search"
+                    f" | keyword='{clean_kw}'"
+                    " → executing keyword fallback"
+                ),
+                search_start,
+                0
+            )
+
+            log_search(
+                f"Investigation: executing keyword fallback | keyword={clean_kw}",
+                handle=search_log_handle
+            )
+            #################################################
+
             products = (
                 supabase.table("products")
                 .select("*")
@@ -767,15 +2090,59 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 .execute()
                 .data
             )
+            ################### AGAIN LOGGING CALL ############
+            log_search_query(
+                search_log_handle,
+                "TIER 2 → FALLBACK 3",
+                f"Keyword search | keyword={clean_kw}",
+                products,
+                search_start
+            )
+            ###################################
 
         # --- FALLBACK 4: MULTI-CATEGORY STORE BALANCER (LAST RESORT ONLY) ---
         # Triggers ONLY if the query has no valid category, color, or keyword match anywhere in DB
         if not products:
+
+            ################# LOGGING CALL ##############
+            log_search_step(
+                search_log_handle,
+                "TIER 2 → FALLBACK 4",
+                "All previous searches returned 0 → entering multi-category store balancer",
+                search_start,
+                0
+            )
+
+            log_search(
+                "Investigation: fetching available categories.",
+                handle=search_log_handle
+            )
+            ########################################
+
             all_cats = supabase.table("products").select("category").execute().data
+            ################### AGAIN LOGGING CALL ###############
+            log_search(
+                f"Investigation: category rows retrieved = {len(all_cats)}",
+                handle=search_log_handle
+            )
+            ####################################################
+            
             distinct_categories = list(set(p.get("category") for p in all_cats if p.get("category")))
+            ################### AGAIN LOGGING CALL ###############
+            log_search(
+                f"Investigation: distinct categories = {distinct_categories}",
+                handle=search_log_handle
+            )
+            ####################################################
 
             balanced_products = []
             for cat in distinct_categories:
+                ################### AGAIN LOGGING CALL ###############
+                log_search(
+                    f"Investigation: FALLBACK 4 querying category='{cat}' | limit=5",
+                    handle=search_log_handle
+                )
+                ####################################################
                 cat_items = (
                     supabase.table("products")
                     .select("*")
@@ -785,49 +2152,225 @@ def search_product(state: ShoppingState) -> ShoppingState:
                     .execute()
                     .data
                 )
+                ################### AGAIN LOGGING CALL ###############
+                log_search(
+                    f"Investigation: category='{cat}' returned {len(cat_items)} products",
+                    handle=search_log_handle
+                )
+                ####################################################
+
                 balanced_products.extend(cat_items)
             products = balanced_products if balanced_products else supabase.table("products").select("*").order("price", desc=False).limit(15).execute().data
+
+            ################ AGAIN LOGGING CALL ########
+            log_search_query(
+                search_log_handle,
+                "TIER 2 → FALLBACK 4",
+                "Final multi-category balanced result",
+                products,
+                search_start
+            )
+            ###########################################
 
     # DYNAMIC SORTING HANDLER
     sort_pref = getattr(intent, 'sorting_preference', None) or getattr(intent, 'sort', None)
     sort_val = str(sort_pref if sort_pref else '').lower()
 
+    ############## AGAIN LOGGING CALL ###########
+    log_search(
+        "",
+        handle=search_log_handle
+    )
+
+    log_search(
+        "SORTING INVESTIGATION",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Sorting preference detected: {sort_pref}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Normalized sorting value: {sort_val}",
+        handle=search_log_handle
+    )
+    ############################################
+
     if ("price_desc" in sort_val or "desc" in sort_val) and products:
+        ##################### AGAIN LOGGING CALL ##############
+        log_search(
+            "Investigation: descending price sort selected.",
+            handle=search_log_handle
+        )
+        ##################################################
         products.sort(key=lambda x: float(x.get("price", 0)), reverse=True)
+        ##################### AGAIN LOGGING CALL ##############
+        log_search(
+            "Investigation: products sorted by price DESC.",
+            handle=search_log_handle
+        )
+        ##################################################
+
     elif products:
+        ##################### AGAIN LOGGING CALL ##############
+        log_search(
+            "Investigation: no descending sort requested → default price ASC.",
+            handle=search_log_handle
+        )
+        ##################################################
         # Default: ALWAYS sort price ascending so index 0 is guaranteed to be the lowest priced item!
         products.sort(key=lambda x: float(x.get("price", float("inf"))))
+        ##################### AGAIN LOGGING CALL ##############
+        log_search(
+            "Investigation: products sorted by price ASC.",
+            handle=search_log_handle
+        )
+        ##################################################
+
+    ################### AGAIN LOGGING CALL ###########
+    else:
+        log_search(
+            "Investigation: no products available for sorting.",
+            handle=search_log_handle
+        )
+
+    log_product_table(
+        products,
+        search_log_handle,
+        "FINAL PRIMARY PRODUCTS AFTER SORTING",
+        limit=20
+    )
+    ##########################################
 
     # SIMILAR PRODUCTS / RECOMMENDATION
     similar_products = []
     category_to_recommend = intent.category
 
+    ################ AGAIN LOGGING CALL ##########
+    log_search(
+        "",
+        handle=search_log_handle
+    )
+
+    log_search(
+        "SIMILAR PRODUCTS INVESTIGATION",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Initial recommendation category: {category_to_recommend}",
+        handle=search_log_handle
+    )
+    ##########################
+
     # If category wasn't in intent, infer it from the first primary product found
     if not category_to_recommend and products:
+        ############## AGAIN LOGGING CALL ###############
+        log_search(
+            "Investigation: category not present in intent.",
+            handle=search_log_handle
+        )
+
+        log_search(
+            "Investigation: inferring category from first primary product.",
+            handle=search_log_handle
+        )
+        #############################################
         category_to_recommend = products[0].get("category")
+        ############## AGAIN LOGGING CALL ###############
+        log_search(
+            f"Investigation: inferred recommendation category = {category_to_recommend}",
+            handle=search_log_handle
+        )
+        #############################################
 
     if category_to_recommend:
         primary_skus = [p.get("sku") for p in products if p.get("sku")]
 
+        ############## AGAIN LOGGING CALL ###############
+        log_search(
+            f"Investigation: recommendation category = {category_to_recommend}",
+            handle=search_log_handle
+        )
+
+        log_search(
+            f"Investigation: primary SKUs excluded = {primary_skus}",
+            handle=search_log_handle
+        )
+        ################################################
         rec_query = (
             supabase.table("products")
             .select("*")
             .eq("category", category_to_recommend)
             .order("price", desc=False)
         )
+        ############### AGAIN LOGGING CALL ################
+        log_search(
+            "Investigation: recommendation query created.",
+            handle=search_log_handle
+        )
+
+        log_search(
+            f"Investigation: recommendation category filter = {category_to_recommend}",
+            handle=search_log_handle
+        )
+        #####################################################
 
         # Exclude primary product SKUs from recommendations
         if primary_skus:
+            ############### AGAIN LOGGING CALL ################
+            log_search(
+                "Investigation: excluding primary product SKUs from recommendations.",
+                handle=search_log_handle
+            )
+            ####################################################
             rec_query = rec_query.not_.in_("sku", primary_skus)
 
         # Try matching color if provided
         if intent.color:
+            ############### AGAIN LOGGING CALL ################
+            log_search(
+                f"Investigation: recommendation COLOR filter = {intent.color}",
+                handle=search_log_handle
+            )
+            ###################################################
             rec_query = rec_query.ilike("color", intent.color.capitalize()) 
 
+        ############### AGAIN LOGGING CALL ################
+        log_search(
+            "Investigation: executing recommendation query | limit=5",
+            handle=search_log_handle
+        )
+        ###################################################
         similar_products = rec_query.limit(5).execute().data
 
+        ############### AGAIN LOGGING CALL ################
+        log_search_query(
+            search_log_handle,
+            "SIMILAR PRODUCTS → PRIMARY",
+            (
+                f"category={category_to_recommend}"
+                f" | color={intent.color}"
+                f" | excluded_skus={len(primary_skus)}"
+            ),
+            similar_products,
+            search_start
+        )
+        ############################################
         # Fallback for similar products
         if not similar_products and primary_skus:
+            ############### AGAIN LOGGING CALL ################
+            log_search_step(
+                search_log_handle,
+                "SIMILAR PRODUCTS → FALLBACK",
+                "Recommendation query returned 0 → removing color restriction",
+                search_start,
+                0
+            )
+            ############################################
+
             similar_products = (
                 supabase.table("products")
                 .select("*")
@@ -837,7 +2380,65 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 .limit(5)
                 .execute()
                 .data
-            )     
+            )
+            ################### AGAIN LOGGING CALL ################
+            log_search_query(
+                search_log_handle,
+                "SIMILAR PRODUCTS → FALLBACK",
+                (
+                    f"category={category_to_recommend}"
+                    f" | excluded_skus={len(primary_skus)}"
+                ),
+                similar_products,
+                search_start
+            )
+    else:
+
+        log_search(
+            "Investigation: no recommendation category available → similar-product search skipped.",
+            handle=search_log_handle
+        )
+    log_product_table(
+        similar_products,
+        search_log_handle,
+        "FINAL SIMILAR PRODUCTS",
+        limit=20
+    )
+
+
+    log_search(
+        "",
+        handle=search_log_handle
+    )
+
+    log_search(
+        "SEARCH FINAL VERDICT",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Final primary product count  : {len(products)}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Final similar product count  : {len(similar_products)}",
+        handle=search_log_handle
+    )
+
+    log_search(
+        f"Final recommendation category: {category_to_recommend}",
+        handle=search_log_handle
+    )
+
+    log_search_step(
+        search_log_handle,
+        "SEARCH COMPLETE",
+        "search_product execution finished",
+        search_start,
+        len(products)
+    )
+        #####################################     
 
     print("Extracted Intent:", intent)
     print("Product Name:", intent.product_name)
@@ -853,6 +2454,70 @@ def search_product(state: ShoppingState) -> ShoppingState:
         "similar_products": similar_products
     }
 
+
+##################### LOGGING --> generate_response ####################
+def log_generate_response(
+    state,
+    products,
+    similar_products,
+    intent_str,
+    route_val,
+    is_general,
+    payment_url,
+    sort_val,
+    eval_products,
+    selected_product,
+    api_displayed_products,
+    api_similar_products,
+    response_text,
+    next_bot_action,
+    next_focus
+):
+    print("\n" + "=" * 100)
+    print("GENERATE RESPONSE")
+    print("=" * 100)
+
+    print("RESPONSE INPUTS")
+    print("-" * 80)
+    print(f"Query                  : {state.get('query')}")
+    print(f"Intent                 : {intent_str}")
+    print(f"Route                  : {route_val or 'None'}")
+    print(f"General request        : {is_general}")
+    print(f"Products received      : {len(products)}")
+    print(f"Similar products       : {len(similar_products)}")
+    print(f"Sorting                : {sort_val or 'None'}")
+    print(f"Payment URL            : {'Yes' if payment_url else 'No'}")
+    print(f"Selected product       : {selected_product.get('name') if selected_product else 'None'}")
+    print(f"Evaluation products    : {len(eval_products)}")
+
+    print("\nRESPONSE DECISION")
+    print("-" * 80)
+
+    if is_general:
+        print("Context                : General / non-shopping")
+    else:
+        print("Context                : Shopping")
+
+    if payment_url:
+        print("Response branch        : Checkout")
+    else:
+        print("Response branch        : LLM response")
+
+    print(f"Products displayed     : {len(api_displayed_products)}")
+    print(f"Similar displayed      : {len(api_similar_products)}")
+
+    print("\nRESPONSE OUTPUT")
+    print("-" * 80)
+    print(f"Response length        : {len(response_text)} characters")
+    print(f"Next bot action        : {next_bot_action}")
+    print(
+        f"Active focus product   : "
+        f"{next_focus.get('name') if next_focus else 'None'}"
+    )
+
+    print("\nGENERATE RESPONSE COMPLETE")
+    print("=" * 100)
+##########################
 
 @traceable(name="Generate Response", description="Convert structured product data into a natural language reply.")
 def generate_response(state: ShoppingState) -> ShoppingState:
@@ -999,6 +2664,26 @@ INSTRUCTIONS:
         else:
             next_focus = state.get("active_focus_product") or products[0]
 
+    ############ LOGGING CALL ############
+    log_generate_response(
+    state=state,
+    products=products,
+    similar_products=similar_products,
+    intent_str=intent_str,
+    route_val=route_val,
+    is_general=is_general,
+    payment_url=payment_url,
+    sort_val=sort_val,
+    eval_products=eval_products,
+    selected_product=selected_product,
+    api_displayed_products=api_displayed_products,
+    api_similar_products=api_similar_products,
+    response_text=response_text,
+    next_bot_action=next_bot_action,
+    next_focus=next_focus
+    )
+    ###################################
+
     return {
         "response": response_text,  # Clean string variable (No .content crash)
         "displayed_products": api_displayed_products,
@@ -1009,6 +2694,45 @@ INSTRUCTIONS:
         "last_bot_action": next_bot_action,
         "active_focus_product": next_focus
     }
+
+
+##################### LOGGING --> get_table_primary_key #####################
+def log_get_table_primary_key(
+    table_name,
+    schema_url,
+    status_code,
+    definitions_found,
+    table_found,
+    primary_key_found,
+    result,
+    error=None
+):
+    print("\n" + "=" * 80)
+    print("GET TABLE PRIMARY KEY")
+    print("=" * 80)
+
+    print("INPUT")
+    print("-" * 80)
+    print(f"Table name             : {table_name}")
+
+    print("\nSCHEMA INSPECTION")
+    print("-" * 80)
+    print(f"Schema endpoint        : {schema_url}")
+    print(f"HTTP status            : {status_code}")
+    print(f"Definitions found      : {definitions_found}")
+    print(f"Table definition found : {table_found}")
+
+    print("\nPRIMARY KEY")
+    print("-" * 80)
+    print(f"Primary key detected   : {primary_key_found or 'None'}")
+    print(f"Final result           : {result}")
+    
+    if error:
+        print(f"Warning / error        : {error}")
+
+    print("\nGET TABLE PRIMARY KEY COMPLETE")
+    print("=" * 80)
+##########################
 
 def get_table_primary_key(table_name: str = "products") -> str:
     """Inspects table schema directly via Supabase API to find the primary key column."""
@@ -1027,11 +2751,96 @@ def get_table_primary_key(table_name: str = "products") -> str:
             properties = table_def.get("properties", {})
             for col, details in properties.items():
                 if "Primary Key" in details.get("description", ""):
+                    ################ LOGGING CALL ##############
+                    log_get_table_primary_key(
+                        table_name,
+                        schema_url,
+                        response.status_code,
+                        len(definitions),
+                        bool(table_def),
+                        col,
+                        col
+                    )
+                    ###########################################
                     return col
+                
     except Exception as e:
         print(f"[Schema Fetch Warning]: {e}")
+        ################ LOG CALL #############
+    log_get_table_primary_key(
+        table_name,
+        f"{supabase.supabase_url}/rest/v1/",
+        None,
+        0,
+        False,
+        None,
+        "sku"
+    )
+        ########################################
         
     return "sku"  # manual fallback if schema inspection fails
+
+
+##################### LOGGING --> create_checkout_session #####################
+def log_create_checkout_session(
+    state,
+    products,
+    req_name,
+    target_product,
+    priority,
+    pk_col=None,
+    pk_val=None,
+    db_product=None,
+    stock_count=None,
+    actual_price=None,
+    payment_url=None,
+    error=None
+):
+    print("\n" + "=" * 100)
+    print("CREATE CHECKOUT SESSION")
+    print("=" * 100)
+
+    print("CHECKOUT INPUT")
+    print("-" * 80)
+    print(f"Query                  : {state.get('query')}")
+    print(f"Requested product      : {req_name or 'None'}")
+    print(f"Products in memory     : {len(products)}")
+
+    print("\nPRODUCT SELECTION")
+    print("-" * 80)
+    print(f"Priority               : {priority}")
+    print(
+        f"Target product         : "
+        f"{target_product.get('name') if target_product else 'None'}"
+    )
+
+    print("\nDATABASE")
+    print("-" * 80)
+    print(f"Primary key column     : {pk_col or 'None'}")
+    print(f"Primary key value      : {pk_val or 'None'}")
+    print(
+        f"DB product             : "
+        f"{db_product.get('name') if db_product else 'None'}"
+    )
+
+    print("\nSTOCK / PAYMENT")
+    print("-" * 80)
+    print(f"Stock                  : {stock_count if stock_count is not None else 'None'}")
+    print(
+        f"Price                  : "
+        f"₹{actual_price if actual_price is not None else 'None'}"
+    )
+    print(f"Payment URL            : {payment_url or 'None'}")
+
+    if error:
+        print(f"\nERROR / WARNING")
+        print("-" * 80)
+        print(f"{error}")
+
+    print("\nCREATE CHECKOUT SESSION COMPLETE")
+    print("=" * 100)
+##########################
+
 
 @traceable(name="Create Checkout Session", description="Deterministic checkout node with history scanning and Razorpay payment link creation.")
 def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> ShoppingState:
@@ -1057,6 +2866,15 @@ def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> Sho
             if db_res and db_res.data:
                 target_product = db_res.data[0]
                 print(f"[Checkout P1] Found via intent product_name: {target_product.get('name')}")
+                ################## LOGGING CALL ####################
+                log_create_checkout_session(
+                    state=state,
+                    products=products,
+                    req_name=req_name,
+                    target_product=target_product,
+                    priority="P1 - Current intent product_name"
+                )
+                #####################################
         except Exception as e:
             print(f"[Checkout Intent Name Search Error]: {e}")
 
@@ -1066,6 +2884,15 @@ def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> Sho
             if req_name.lower() in p.get("name", "").lower():
                 target_product = p
                 print(f"[Checkout P1b] Found in products memory: {target_product.get('name')}")
+                ################## LOGGING CALL ##############
+                log_create_checkout_session(
+                    state=state,
+                    products=products,
+                    req_name=req_name,
+                    target_product=target_product,
+                    priority="P1b - Current products memory"
+                )
+                ##################################
                 break
 
     # ── PRIORITY 2: Scan conversation history for last named product ──────────
@@ -1081,6 +2908,15 @@ def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> Sho
                     if db_res and db_res.data:
                         target_product = db_res.data[0]
                         print(f"[Checkout P2] Found via history product_name='{past_name}': {target_product.get('name')}")
+                        ################## LOGGING CALL ##############
+                        log_create_checkout_session(
+                            state=state,
+                            products=products,
+                            req_name=req_name,
+                            target_product=target_product,
+                            priority="P2 - Conversation history"
+                        )
+                        ##################################
                         break
         except Exception as hist_err:
             print(f"[Checkout History Scan Error]: {hist_err}")
@@ -1097,9 +2933,29 @@ def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> Sho
         if afp and (req_name is None or req_name.lower() in afp_name.lower()):
             target_product = afp
             print(f"[Checkout P3a] Using active_focus_product: {afp_name}")
+            ################# LOGGING CALL #####################
+            log_create_checkout_session(
+                state=state,
+                products=products,
+                req_name=req_name,
+                target_product=target_product,
+                priority="P3a - active_focus_product"
+            )
+            ############################
+
         elif sel:
             target_product = sel
             print(f"[Checkout P3b] Using selected_product: {sel.get('name')}")
+            ################# LOGGING CALL #####################
+            log_create_checkout_session(
+                state=state,
+                products=products,
+                req_name=req_name,
+                target_product=target_product,
+                priority="P3b - selected_product"
+            )
+            ###########################
+
         elif p0:
             # Last resort: Name-coherence check before using products[0]
             p0_name = p0.get("name", "").lower()
@@ -1107,15 +2963,48 @@ def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> Sho
             if any(w in p0_name for w in raw_query.split() if len(w) > 3) or (focus_name and focus_name in p0_name):
                 target_product = p0
                 print(f"[Checkout P3c] Using products[0] (name-coherent): {p0.get('name')}")
+                ################# LOGGING CALL #####################
+                log_create_checkout_session(
+                    state=state,
+                    products=products,
+                    req_name=req_name,
+                    target_product=target_product,
+                    priority="P3c - products[0] name-coherent"
+                )
+                ###########################
             else:
                 print(f"[Checkout P3c] Skipped products[0] ('{p0.get('name')}') — not coherent with query '{raw_query}'")
 
     if not target_product:
+        #################### LOGGING CALL ###############
+        response_text = (
+            "Sorry, I couldn't find an item in our conversation "
+            "to checkout. Which item would you like to buy?"
+        )
+
+        log_create_checkout_session(
+            state=state,
+            products=products,
+            req_name=req_name,
+            target_product=None,
+            priority="NONE - No product found",
+            error="All checkout product-selection priorities failed."
+        )
+
         return {
-            "response": "Sorry, I couldn't find an item in our conversation to checkout. Which item would you like to buy?",
+            "response": response_text,
             "payment_url": None,
             "products": products
         }
+
+        # Temporary commented-out fallback response for debugging purposes
+        # return {
+        #     "response": "Sorry, I couldn't find an item in our conversation to checkout. Which item would you like to buy?",
+        #     "payment_url": None,
+        #     "products": products
+        # }
+    ###########################################
+
 
     # 1. Dynamically retrieve primary key column name
     pk_col = get_table_primary_key("products")
@@ -1142,11 +3031,40 @@ def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> Sho
         stock_count = 0
 
     if not db_product or stock_count <= 0:
+        #################### LOGGING CALL ###############
+        response_text = (
+            f"Sorry, **{target_product.get('name', 'this item')}** "
+            f"is currently out of stock."
+        )
+
+        log_create_checkout_session(
+            state=state,
+            products=products,
+            req_name=req_name,
+            target_product=target_product,
+            priority="PRODUCT SELECTED - OUT OF STOCK",
+            pk_col=pk_col,
+            pk_val=pk_val,
+            db_product=db_product,
+            stock_count=stock_count,
+            actual_price=None,
+            payment_url=None,
+            error="Product found but stock_count <= 0."
+        )
+
         return {
-            "response": f"Sorry, **{target_product.get('name', 'this item')}** is currently out of stock.",
+            "response": response_text,
             "payment_url": None,
             "products": products
         }
+
+        # Temporary commented-out fallback response for debugging purposes
+        # return {
+        #     "response": f"Sorry, **{target_product.get('name', 'this item')}** is currently out of stock.",
+        #     "payment_url": None,
+        #     "products": products
+        # }
+    ##############################################
 
     actual_price = float(db_product.get("price", 0))
     p_name = db_product.get("name", "Product")
@@ -1171,6 +3089,22 @@ def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> Sho
 
         payment_url = payment_link.get("short_url")
 
+        #################### LOGGING CALL ###############
+        log_create_checkout_session(
+            state=state,
+            products=products,
+            req_name=req_name,
+            target_product=target_product,
+            priority="CHECKOUT SUCCESS",
+            pk_col=pk_col,
+            pk_val=pk_val,
+            db_product=db_product,
+            stock_count=stock_count,
+            actual_price=actual_price,
+            payment_url=payment_url
+        )
+        ######################################
+
         return {
             "payment_url": payment_url,
             "selected_product": db_product,
@@ -1180,12 +3114,65 @@ def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> Sho
     except Exception as e:
         print(f"Razorpay API Error: {e}")
         fallback_url = db_product.get("payment_link") or "#"
+
+        #################### LOGGING CALL ###############
+        payment_url = (
+            fallback_url
+            if fallback_url != "#"
+            else None
+        )
+
+        log_create_checkout_session(
+            state=state,
+            products=products,
+            req_name=req_name,
+            target_product=target_product,
+            priority="CHECKOUT FALLBACK - Razorpay failed",
+            pk_col=pk_col,
+            pk_val=pk_val,
+            db_product=db_product,
+            stock_count=stock_count,
+            actual_price=actual_price,
+            payment_url=payment_url,
+            error=str(e)
+        )
+
         return {
-            "payment_url": fallback_url if fallback_url != "#" else None,
+            "payment_url": payment_url,
             "selected_product": db_product,
             "products": products
         }
+        # Temporary commented-out fallback response for debugging purposes
+        # return {
+        #     "payment_url": fallback_url if fallback_url != "#" else None,
+        #     "selected_product": db_product,
+        #     "products": products
+        # }
+    #################################
     
+
+##################### LOGGING --> route_after_intent #####################
+def log_route_after_intent(
+    intent_val,
+    next_node
+):
+    print("\n" + "=" * 80)
+    print("ROUTE AFTER INTENT")
+    print("=" * 80)
+
+    print("INPUT")
+    print("-" * 80)
+    print(f"Intent                 : {intent_val or 'None'}")
+
+    print("\nROUTING DECISION")
+    print("-" * 80)
+    print(f"Next node              : {next_node}")
+
+    print("\nROUTE AFTER INTENT COMPLETE")
+    print("=" * 80)
+##########################
+
+
 def route_after_intent(state: ShoppingState) -> str:
     """
     Check if intent extracted by LLM is CHECKOUT.
@@ -1201,9 +3188,47 @@ def route_after_intent(state: ShoppingState) -> str:
         intent_val = getattr(raw_intent, "value", raw_intent)
 
     if str(intent_val).lower() == "checkout":
+        ################### LOGGING CALL ################
+        log_route_after_intent(
+            intent_val=intent_val,
+            next_node="create_checkout_session"
+        )
+        ###############################################
         return "create_checkout_session"
-    
+
+    ############### LOGGING CALL ################
+    log_route_after_intent(
+        intent_val=intent_val,
+        next_node="search_products"
+    )
+    ###########################################
     return "search_products"
+
+
+################## LOGGING --> fetch_featured #####################
+##################### LOGGING --> fetch_featured #####################
+def log_fetch_featured(
+    distinct_categories,
+    featured_count,
+    fallback_used,
+    error=None
+):
+    print("\n" + "=" * 80)
+    print("FETCH FEATURED")
+    print("=" * 80)
+
+    print("FETCH")
+    print("-" * 80)
+    print(f"Categories found      : {len(distinct_categories)}")
+    print(f"Featured products     : {featured_count}")
+    print(f"Fallback query used   : {fallback_used}")
+
+    if error:
+        print(f"Error                 : {error}")
+
+    print("\nFETCH FEATURED COMPLETE")
+    print("=" * 80)
+##########################
 
 @traceable(name="Fetch Featured", description="Fetch top products per category after an out-of-stock denial / alternative offer.")
 def fetch_featured(state: ShoppingState) -> ShoppingState:
@@ -1242,9 +3267,31 @@ def fetch_featured(state: ShoppingState) -> ShoppingState:
                 .execute()
                 .data
             )
+            ############### LOGGING CALL ################
+            log_fetch_featured(
+                distinct_categories=distinct_categories,
+                featured_count=len(featured),
+                fallback_used=True
+            )
+        else:
+            log_fetch_featured(
+                distinct_categories=distinct_categories,
+                featured_count=len(featured),
+                fallback_used=False
+            )
+        #############################################
     except Exception as e:
         print(f"[fetch_featured error]: {e}")
         featured = []
+
+        ################ LOGGING CALL ################
+        log_fetch_featured(
+            distinct_categories=[],
+            featured_count=0,
+            fallback_used=False,
+            error=str(e)
+        )
+        #########################################
 
     # # Inject a RECOMMEND intent so generate_response produces a showcase reply
     # featured_intent = ShoppingIntentModel(intent=IntentType.RECOMMEND)
@@ -1262,6 +3309,120 @@ def fetch_featured(state: ShoppingState) -> ShoppingState:
         "similar_products": [],
         "intent": "showed_products"
     }
+
+
+
+######################### LOGGING & DEBUGGING #########################
+
+# 1. route_post_sync logging
+def log_route_post_sync_state(route, next_node):
+
+    route = getattr(route, "value", route)
+
+    print("\n" + "=" * 80)
+    print("ROUTE POST SYNC")
+    print("=" * 80)
+
+    print("\nINPUT")
+    print("-" * 80)
+    print(f"| {'Field':<20} | {'Value':<52} |")
+    print(f"|{'-' * 22}|{'-' * 54}|")
+    print(f"| {'route':<20} | {str(route):<52} |")
+
+    print("\nFLOW")
+    print("-" * 80)
+
+    print(
+        f"""
+        ┌──────────────────────────────────────────────┐
+        │ ROUTER                                       │
+        │                                              │
+        │ route = {str(route):<34} │
+        └──────────────────────┬───────────────────────┘
+                               │
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │ ROUTE POST SYNC                              │
+        │                                              │
+        │ Check router route                           │
+        └──────────────────────┬───────────────────────┘
+                               │
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │ NEXT NODE                                    │
+        │                                              │
+        │ {next_node:<44} │
+        └──────────────────────────────────────────────┘
+        """
+    )
+
+    print("\nOUTPUT")
+    print("-" * 80)
+    print(f"| {'next_node':<20} | {next_node:<52} |")
+
+    print("=" * 80)
+
+# 2. route_after_intent logging
+def log_route_after_intent_state(
+    intent,
+    last_action,
+    has_specific_filters,
+    next_node
+):
+    intent_str = str(
+        getattr(getattr(intent, "intent", intent), "value",
+                getattr(intent, "intent", intent))
+        or ""
+    ).lower()
+
+    print("\n" + "=" * 80)
+    print("ROUTE AFTER INTENT")
+    print("=" * 80)
+
+    print("\nINPUT")
+    print("-" * 80)
+    print(f"| {'Field':<25} | {'Value':<47} |")
+    print(f"|{'-' * 27}|{'-' * 49}|")
+    print(f"| {'intent':<25} | {intent_str:<47} |")
+    print(f"| {'last_bot_action':<25} | {str(last_action):<47} |")
+    print(f"| {'has_specific_filters':<25} | {str(has_specific_filters):<47} |")
+
+    print("\nFLOW")
+    print("-" * 80)
+
+    print(
+        f"""
+        ┌──────────────────────────────────────────────┐
+        │ EXTRACT INTENT                               │
+        │                                              │
+        │ intent = {intent_str:<32} │
+        └──────────────────────┬───────────────────────┘
+                               │
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │ ROUTE AFTER INTENT                            │
+        │                                              │
+        │ Check intent + filters + last action         │
+        └──────────────────────┬───────────────────────┘
+                               │
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │ NEXT NODE                                    │
+        │                                              │
+        │ {next_node:<44} │
+        └──────────────────────────────────────────────┘
+        """
+    )
+
+    print("\nOUTPUT")
+    print("-" * 80)
+    print(f"| {'Field':<25} | {'Value':<47} |")
+    print(f"|{'-' * 27}|{'-' * 49}|")
+    print(f"| {'next_node':<25} | {next_node:<47} |")
+
+    print("=" * 80)
+
+#################################################
 
 
 # ── GRAPH INITIALIZATION ──────────────────────────────────────────────────────
@@ -1298,10 +3459,22 @@ def route_post_sync(state: ShoppingState) -> str:
     route = state.get("route")
     route_str = str(getattr(route, "value", route) or "").lower()
 
-    if route_str == "general":
-        return "general_chat"
+    ###################### logging call ######################
+    #1. Temporarily commments out for logging...
+    # if route_str == "general":
+    #     return "general_chat"
 
-    return "extract_intent"
+    # return "extract_intent"
+
+    if route_str == "general":
+        next_node = "general_chat"
+    else:
+        next_node = "extract_intent"
+
+    log_route_post_sync_state(route, next_node)
+
+    return next_node
+    #############################################
 
 
 # ── 2. INTENT GATE FUNCTION (Gate 2) ──────────────────────────────────────────
@@ -1317,9 +3490,7 @@ def route_after_intent(state: ShoppingState) -> str:
     intent_str = str(getattr(intent_val, "value", intent_val) or "").lower()
     last_action = state.get("last_bot_action")
 
-    # 1. Checkout link generation
-    if intent_str == "checkout":
-        return "create_checkout_session"
+################ Logging call ######################
 
     # 2. Check if user provided actual shopping filters
     has_specific_filters = any([
@@ -1330,16 +3501,47 @@ def route_after_intent(state: ShoppingState) -> str:
         getattr(raw_intent, "price_max", None)
     ])
 
-    # 3. If previous turn offered alternatives and current query has NO specific filters (e.g. 'yes', 'sure', 'ha')
-    if last_action in ("offered_alternatives", "denied_oos") and not has_specific_filters:
-        print("[route_after_intent] Affirmation follow-up -> Branching to fetch_featured")
-        return "fetch_featured"
 
-    if intent_str == "recommend" and not has_specific_filters:
-        return "fetch_featured"
+    #### Temporarily commented out for logging
+    # # 1. Checkout link generation
+    #     if intent_str == "checkout":
+    #         return "create_checkout_session"
 
-    # 4. Default: Search DB for the requested product
-    return "search_products"
+    # # 3. If previous turn offered alternatives and current query has NO specific filters (e.g. 'yes', 'sure', 'ha')
+    # if last_action in ("offered_alternatives", "denied_oos") and not has_specific_filters:
+    #     print("[route_after_intent] Affirmation follow-up -> Branching to fetch_featured")
+    #     return "fetch_featured"
+
+    # if intent_str == "recommend" and not has_specific_filters:
+    #     return "fetch_featured"
+
+    # # 4. Default: Search DB for the requested product
+    # return "search_products"
+
+    if intent_str == "checkout":
+            next_step = "create_checkout_session"
+
+    elif (
+        last_action in ("offered_alternatives", "denied_oos")
+        and not has_specific_filters
+    ):
+        next_step = "fetch_featured"
+
+    elif intent_str == "recommend" and not has_specific_filters:
+        next_step = "fetch_featured"
+
+    else:
+        next_step = "search_products"
+
+    log_route_after_intent_state(
+        intent=intent_str,
+        last_action=last_action,
+        has_specific_filters=has_specific_filters,
+        next_node=next_step
+    )
+
+    return next_step
+##############################################
 
 
 # ── 3. GRAPH INITIALIZATION & CONDITIONAL EDGES ──────────────────────────────

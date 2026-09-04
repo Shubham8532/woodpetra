@@ -1,0 +1,664 @@
+
+====================================================================================================
+SEARCH PRODUCT | started=2026-09-04 20:13:14.464
+====================================================================================================
+RAW USER QUERY
+Query: show me black hoodies under 1500
+
+SEARCH FILTERS
+--------------------------------------------------------------------------------
+Product Name   : None
+Category       : Hoodie
+Keyword        : None
+Color          : black
+Size           : None
+Price Min      : None
+Price Max      : 1500
+Sort           : None
+Intent Type    : IntentType.SEARCH
+--------------------------------------------------------------------------------
+[20:13:14.464] SAFETY CHECK | Usable search filter detected: True | elapsed=0.7 ms
+Investigation: product_name=False
+Investigation: category=True
+Investigation: keyword=False
+Investigation: color=True
+Investigation: size=False
+Investigation: price_min=False
+Investigation: price_max=True
+Investigation: safety check passed → database search is allowed.
+[20:13:14.464] TIER 2 | No specific product_name → entering general category/attribute search | elapsed=0.8 ms
+Investigation: clean keyword = ''
+Investigation: applying CATEGORY filter = Hoodie
+Investigation: applying COLOR filter = black
+Investigation: applying PRICE MAX = 1500
+[20:13:14.919] TIER 2 → PRIMARY QUERY | category=Hoodie | keyword= | color=black | size=None | price_min=None | price_max=1500 | order=price ASC | elapsed=455.8 ms
+Investigation: executing TIER 2 PRIMARY database query NOW.
+Investigation: TIER 2 PRIMARY database query completed.
+[20:13:15.594] TIER 2 → PRIMARY QUERY | General filtered search | category=Hoodie | keyword= | color=black | size=None | price_min=None | price_max=1500 | results=1 | elapsed=1130.6 ms
+
+TIER 2 → PRIMARY QUERY RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 1
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-007     ActiveHood Hoodie             Hoodie          Black         XL            1049
+
+SORTING INVESTIGATION
+Sorting preference detected: None
+Normalized sorting value: 
+Investigation: no descending sort requested → default price ASC.
+Investigation: products sorted by price ASC.
+
+FINAL PRIMARY PRODUCTS AFTER SORTING
+----------------------------------------------------------------------------------------------------
+Count: 1
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-007     ActiveHood Hoodie             Hoodie          Black         XL            1049
+
+SIMILAR PRODUCTS INVESTIGATION
+Initial recommendation category: Hoodie
+Investigation: recommendation category = Hoodie
+Investigation: primary SKUs excluded = ['SF-HO-007']
+Investigation: recommendation query created.
+Investigation: recommendation category filter = Hoodie
+Investigation: excluding primary product SKUs from recommendations.
+Investigation: recommendation COLOR filter = black
+Investigation: executing recommendation query | limit=5
+[20:13:15.649] SIMILAR PRODUCTS → PRIMARY | category=Hoodie | color=black | excluded_skus=1 | results=2 | elapsed=1185.8 ms
+
+SIMILAR PRODUCTS → PRIMARY RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 2
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-011     ComfortLayer Hoodie           Hoodie          Black         XL            1949
+SF-HO-006     CloudWarm Hoodie              Hoodie          Black         M             2099
+
+FINAL SIMILAR PRODUCTS
+----------------------------------------------------------------------------------------------------
+Count: 2
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-011     ComfortLayer Hoodie           Hoodie          Black         XL            1949
+SF-HO-006     CloudWarm Hoodie              Hoodie          Black         M             2099
+
+SEARCH FINAL VERDICT
+Final primary product count  : 1
+Final similar product count  : 2
+Final recommendation category: Hoodie
+[20:13:15.650] SEARCH COMPLETE | search_product execution finished | results=1 | elapsed=1186.4 ms
+
+====================================================================================================
+SEARCH PRODUCT | started=2026-09-04 20:33:54.228
+====================================================================================================
+RAW USER QUERY
+Query: show me black hoodies under 1500
+
+SEARCH FILTERS
+--------------------------------------------------------------------------------
+Product Name   : None
+Category       : Hoodie
+Keyword        : None
+Color          : black
+Size           : None
+Price Min      : None
+Price Max      : 1500
+Sort           : None
+Intent Type    : IntentType.SEARCH
+--------------------------------------------------------------------------------
+[20:33:54.229] SAFETY CHECK | Usable search filter detected: True | elapsed=1.1 ms
+Investigation: product_name=False
+Investigation: category=True
+Investigation: keyword=False
+Investigation: color=True
+Investigation: size=False
+Investigation: price_min=False
+Investigation: price_max=True
+Investigation: safety check passed → database search is allowed.
+[20:33:54.229] TIER 2 | No specific product_name → entering general category/attribute search | elapsed=1.2 ms
+Investigation: clean keyword = ''
+Investigation: applying CATEGORY filter = Hoodie
+Investigation: applying COLOR filter = black
+Investigation: applying PRICE MAX = 1500
+[20:33:54.703] TIER 2 → PRIMARY QUERY | category=Hoodie | keyword= | color=black | size=None | price_min=None | price_max=1500 | order=price ASC | elapsed=475.2 ms
+Investigation: executing TIER 2 PRIMARY database query NOW.
+Investigation: TIER 2 PRIMARY database query completed.
+[20:33:55.247] TIER 2 → PRIMARY QUERY | General filtered search | category=Hoodie | keyword= | color=black | size=None | price_min=None | price_max=1500 | results=1 | elapsed=1019.6 ms
+
+TIER 2 → PRIMARY QUERY RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 1
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-007     ActiveHood Hoodie             Hoodie          Black         XL            1049
+
+SORTING INVESTIGATION
+Sorting preference detected: None
+Normalized sorting value: 
+Investigation: no descending sort requested → default price ASC.
+Investigation: products sorted by price ASC.
+
+FINAL PRIMARY PRODUCTS AFTER SORTING
+----------------------------------------------------------------------------------------------------
+Count: 1
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-007     ActiveHood Hoodie             Hoodie          Black         XL            1049
+
+SIMILAR PRODUCTS INVESTIGATION
+Initial recommendation category: Hoodie
+Investigation: recommendation category = Hoodie
+Investigation: primary SKUs excluded = ['SF-HO-007']
+Investigation: recommendation query created.
+Investigation: recommendation category filter = Hoodie
+Investigation: excluding primary product SKUs from recommendations.
+Investigation: recommendation COLOR filter = black
+Investigation: executing recommendation query | limit=5
+[20:33:55.290] SIMILAR PRODUCTS → PRIMARY | category=Hoodie | color=black | excluded_skus=1 | results=2 | elapsed=1062.5 ms
+
+SIMILAR PRODUCTS → PRIMARY RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 2
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-011     ComfortLayer Hoodie           Hoodie          Black         XL            1949
+SF-HO-006     CloudWarm Hoodie              Hoodie          Black         M             2099
+
+FINAL SIMILAR PRODUCTS
+----------------------------------------------------------------------------------------------------
+Count: 2
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-011     ComfortLayer Hoodie           Hoodie          Black         XL            1949
+SF-HO-006     CloudWarm Hoodie              Hoodie          Black         M             2099
+
+SEARCH FINAL VERDICT
+Final primary product count  : 1
+Final similar product count  : 2
+Final recommendation category: Hoodie
+[20:33:55.291] SEARCH COMPLETE | search_product execution finished | results=1 | elapsed=1063.2 ms
+
+====================================================================================================
+SEARCH PRODUCT | started=2026-09-04 20:34:18.121
+====================================================================================================
+RAW USER QUERY
+Query: do you have cloudwarm hoodie in pink xl?
+
+SEARCH FILTERS
+--------------------------------------------------------------------------------
+Product Name   : CloudWarm Hoodie
+Category       : Hoodie
+Keyword        : None
+Color          : pink
+Size           : SizeOption.XL
+Price Min      : None
+Price Max      : None
+Sort           : None
+Intent Type    : IntentType.SEARCH
+--------------------------------------------------------------------------------
+[20:34:18.121] SAFETY CHECK | Usable search filter detected: True | elapsed=0.5 ms
+Investigation: product_name=True
+Investigation: category=True
+Investigation: keyword=False
+Investigation: color=True
+Investigation: size=True
+Investigation: price_min=False
+Investigation: price_max=False
+Investigation: safety check passed → database search is allowed.
+[20:34:18.121] TIER 1 | Specific product search selected | product_name='CloudWarm Hoodie' | elapsed=0.6 ms
+Investigation: product_name exists → entering strict product-name search.
+Investigation: base query created.
+Investigation: table=products
+Investigation: SELECT=*
+Investigation: name ILIKE '%CloudWarm Hoodie%'
+[20:34:18.121] TIER 1 → BUILD STRICT QUERY | name contains 'CloudWarm Hoodie' | color=pink | size=SizeOption.XL | elapsed=0.8 ms
+Investigation: COLOR filter detected → applying color='pink'
+Investigation: query now contains color ILIKE 'Pink'
+Investigation: SIZE filter detected → resolved size='XL'
+Investigation: query now contains size='XL'
+Investigation: executing TIER 1 strict database query NOW.
+Investigation: TIER 1 strict database query completed.
+[20:34:18.626] TIER 1 → STRICT QUERY | Product name='CloudWarm Hoodie' | color=pink | size=SizeOption.XL | results=0 | elapsed=505.3 ms
+
+TIER 1 → STRICT QUERY RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 0
+[20:34:18.626] TIER 1 → FALLBACK 1 | Strict product search returned 0 results → removing color/size restrictions | results=0 | elapsed=505.4 ms
+Investigation: product-name search produced ZERO results.
+Investigation: removing color and size restrictions.
+[20:34:18.683] TIER 1 → FALLBACK 1 | Searching product name='CloudWarm Hoodie' without requested color/size | results=1 | elapsed=562.2 ms
+
+TIER 1 → FALLBACK 1 RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 1
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-006     CloudWarm Hoodie              Hoodie          Black         M             2099
+
+SORTING INVESTIGATION
+Sorting preference detected: None
+Normalized sorting value: 
+Investigation: no descending sort requested → default price ASC.
+Investigation: products sorted by price ASC.
+
+FINAL PRIMARY PRODUCTS AFTER SORTING
+----------------------------------------------------------------------------------------------------
+Count: 1
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-006     CloudWarm Hoodie              Hoodie          Black         M             2099
+
+SIMILAR PRODUCTS INVESTIGATION
+Initial recommendation category: Hoodie
+Investigation: recommendation category = Hoodie
+Investigation: primary SKUs excluded = ['SF-HO-006']
+Investigation: recommendation query created.
+Investigation: recommendation category filter = Hoodie
+Investigation: excluding primary product SKUs from recommendations.
+Investigation: recommendation COLOR filter = pink
+Investigation: executing recommendation query | limit=5
+[20:34:18.742] SIMILAR PRODUCTS → PRIMARY | category=Hoodie | color=pink | excluded_skus=1 | results=0 | elapsed=621.7 ms
+
+SIMILAR PRODUCTS → PRIMARY RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 0
+[20:34:18.743] SIMILAR PRODUCTS → FALLBACK | Recommendation query returned 0 → removing color restriction | results=0 | elapsed=621.8 ms
+[20:34:18.783] SIMILAR PRODUCTS → FALLBACK | category=Hoodie | excluded_skus=1 | results=5 | elapsed=662.5 ms
+
+SIMILAR PRODUCTS → FALLBACK RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 5
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-008     MinimalWarm Hoodie            Hoodie          White         XL             549
+SF-HO-005     FleecePrime Hoodie            Hoodie          Blue          L              599
+SF-HO-002     UrbanWarm Hoodie              Hoodie          Grey          XXL            799
+SF-HO-012     NorthEdge Hoodie              Hoodie          Grey          M              899
+SF-HO-007     ActiveHood Hoodie             Hoodie          Black         XL            1049
+
+FINAL SIMILAR PRODUCTS
+----------------------------------------------------------------------------------------------------
+Count: 5
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-008     MinimalWarm Hoodie            Hoodie          White         XL             549
+SF-HO-005     FleecePrime Hoodie            Hoodie          Blue          L              599
+SF-HO-002     UrbanWarm Hoodie              Hoodie          Grey          XXL            799
+SF-HO-012     NorthEdge Hoodie              Hoodie          Grey          M              899
+SF-HO-007     ActiveHood Hoodie             Hoodie          Black         XL            1049
+
+SEARCH FINAL VERDICT
+Final primary product count  : 1
+Final similar product count  : 5
+Final recommendation category: Hoodie
+[20:34:18.783] SEARCH COMPLETE | search_product execution finished | results=1 | elapsed=662.8 ms
+
+====================================================================================================
+SEARCH PRODUCT | started=2026-09-04 21:07:13.264
+====================================================================================================
+RAW USER QUERY
+Query: do you have cloudwarm hoodie in pink xl?
+
+SEARCH FILTERS
+--------------------------------------------------------------------------------
+Product Name   : CloudWarm Hoodie
+Category       : Hoodie
+Keyword        : None
+Color          : pink
+Size           : SizeOption.XL
+Price Min      : None
+Price Max      : None
+Sort           : None
+Intent Type    : IntentType.SEARCH
+--------------------------------------------------------------------------------
+[21:07:13.264] SAFETY CHECK | Usable search filter detected: True | elapsed=1.4 ms
+Investigation: product_name=True
+Investigation: category=True
+Investigation: keyword=False
+Investigation: color=True
+Investigation: size=True
+Investigation: price_min=False
+Investigation: price_max=False
+Investigation: safety check passed → database search is allowed.
+[21:07:13.265] TIER 1 | Specific product search selected | product_name='CloudWarm Hoodie' | elapsed=1.5 ms
+Investigation: product_name exists → entering strict product-name search.
+Investigation: base query created.
+Investigation: table=products
+Investigation: SELECT=*
+Investigation: name ILIKE '%CloudWarm Hoodie%'
+[21:07:13.707] TIER 1 → BUILD STRICT QUERY | name contains 'CloudWarm Hoodie' | color=pink | size=SizeOption.XL | elapsed=444.5 ms
+Investigation: COLOR filter detected → applying color='pink'
+Investigation: query now contains color ILIKE 'Pink'
+Investigation: SIZE filter detected → resolved size='XL'
+Investigation: query now contains size='XL'
+Investigation: executing TIER 1 strict database query NOW.
+Investigation: TIER 1 strict database query completed.
+[21:07:14.288] TIER 1 → STRICT QUERY | Product name='CloudWarm Hoodie' | color=pink | size=SizeOption.XL | results=0 | elapsed=1024.8 ms
+
+TIER 1 → STRICT QUERY RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 0
+[21:07:14.288] TIER 1 → FALLBACK 1 | Strict product search returned 0 results → removing color/size restrictions | results=0 | elapsed=1025.3 ms
+Investigation: product-name search produced ZERO results.
+Investigation: removing color and size restrictions.
+[21:07:14.344] TIER 1 → FALLBACK 1 | Searching product name='CloudWarm Hoodie' without requested color/size | results=1 | elapsed=1081.4 ms
+
+TIER 1 → FALLBACK 1 RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 1
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-006     CloudWarm Hoodie              Hoodie          Black         M             2099
+
+SORTING INVESTIGATION
+Sorting preference detected: None
+Normalized sorting value: 
+Investigation: no descending sort requested → default price ASC.
+Investigation: products sorted by price ASC.
+
+FINAL PRIMARY PRODUCTS AFTER SORTING
+----------------------------------------------------------------------------------------------------
+Count: 1
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-006     CloudWarm Hoodie              Hoodie          Black         M             2099
+
+SIMILAR PRODUCTS INVESTIGATION
+Initial recommendation category: Hoodie
+Investigation: recommendation category = Hoodie
+Investigation: primary SKUs excluded = ['SF-HO-006']
+Investigation: recommendation query created.
+Investigation: recommendation category filter = Hoodie
+Investigation: excluding primary product SKUs from recommendations.
+Investigation: recommendation COLOR filter = pink
+Investigation: executing recommendation query | limit=5
+[21:07:14.404] SIMILAR PRODUCTS → PRIMARY | category=Hoodie | color=pink | excluded_skus=1 | results=0 | elapsed=1141.2 ms
+
+SIMILAR PRODUCTS → PRIMARY RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 0
+[21:07:14.404] SIMILAR PRODUCTS → FALLBACK | Recommendation query returned 0 → removing color restriction | results=0 | elapsed=1141.4 ms
+[21:07:14.436] SIMILAR PRODUCTS → FALLBACK | category=Hoodie | excluded_skus=1 | results=5 | elapsed=1172.7 ms
+
+SIMILAR PRODUCTS → FALLBACK RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 5
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-008     MinimalWarm Hoodie            Hoodie          White         XL             549
+SF-HO-005     FleecePrime Hoodie            Hoodie          Blue          L              599
+SF-HO-002     UrbanWarm Hoodie              Hoodie          Grey          XXL            799
+SF-HO-012     NorthEdge Hoodie              Hoodie          Grey          M              899
+SF-HO-007     ActiveHood Hoodie             Hoodie          Black         XL            1049
+
+FINAL SIMILAR PRODUCTS
+----------------------------------------------------------------------------------------------------
+Count: 5
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-008     MinimalWarm Hoodie            Hoodie          White         XL             549
+SF-HO-005     FleecePrime Hoodie            Hoodie          Blue          L              599
+SF-HO-002     UrbanWarm Hoodie              Hoodie          Grey          XXL            799
+SF-HO-012     NorthEdge Hoodie              Hoodie          Grey          M              899
+SF-HO-007     ActiveHood Hoodie             Hoodie          Black         XL            1049
+
+SEARCH FINAL VERDICT
+Final primary product count  : 1
+Final similar product count  : 5
+Final recommendation category: Hoodie
+[21:07:14.436] SEARCH COMPLETE | search_product execution finished | results=1 | elapsed=1173.4 ms
+
+====================================================================================================
+SEARCH PRODUCT | started=2026-09-04 21:18:24.091
+====================================================================================================
+RAW USER QUERY
+Query: show me black hoodies under 1500
+
+SEARCH FILTERS
+--------------------------------------------------------------------------------
+Product Name   : None
+Category       : Hoodie
+Keyword        : None
+Color          : black
+Size           : None
+Price Min      : None
+Price Max      : 1500
+Sort           : None
+Intent Type    : IntentType.SEARCH
+--------------------------------------------------------------------------------
+[21:18:24.092] SAFETY CHECK | Usable search filter detected: True | elapsed=1.2 ms
+Investigation: product_name=False
+Investigation: category=True
+Investigation: keyword=False
+Investigation: color=True
+Investigation: size=False
+Investigation: price_min=False
+Investigation: price_max=True
+Investigation: safety check passed → database search is allowed.
+[21:18:24.092] TIER 2 | No specific product_name → entering general category/attribute search | elapsed=1.3 ms
+Investigation: clean keyword = ''
+Investigation: applying CATEGORY filter = Hoodie
+Investigation: applying COLOR filter = black
+Investigation: applying PRICE MAX = 1500
+[21:18:24.468] TIER 2 → PRIMARY QUERY | category=Hoodie | keyword= | color=black | size=None | price_min=None | price_max=1500 | order=price ASC | elapsed=377.9 ms
+Investigation: executing TIER 2 PRIMARY database query NOW.
+Investigation: TIER 2 PRIMARY database query completed.
+[21:18:25.045] TIER 2 → PRIMARY QUERY | General filtered search | category=Hoodie | keyword= | color=black | size=None | price_min=None | price_max=1500 | results=1 | elapsed=954.8 ms
+
+TIER 2 → PRIMARY QUERY RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 1
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-007     ActiveHood Hoodie             Hoodie          Black         XL            1049
+
+SORTING INVESTIGATION
+Sorting preference detected: None
+Normalized sorting value: 
+Investigation: no descending sort requested → default price ASC.
+Investigation: products sorted by price ASC.
+
+FINAL PRIMARY PRODUCTS AFTER SORTING
+----------------------------------------------------------------------------------------------------
+Count: 1
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-007     ActiveHood Hoodie             Hoodie          Black         XL            1049
+
+SIMILAR PRODUCTS INVESTIGATION
+Initial recommendation category: Hoodie
+Investigation: recommendation category = Hoodie
+Investigation: primary SKUs excluded = ['SF-HO-007']
+Investigation: recommendation query created.
+Investigation: recommendation category filter = Hoodie
+Investigation: excluding primary product SKUs from recommendations.
+Investigation: recommendation COLOR filter = black
+Investigation: executing recommendation query | limit=5
+[21:18:25.085] SIMILAR PRODUCTS → PRIMARY | category=Hoodie | color=black | excluded_skus=1 | results=2 | elapsed=994.9 ms
+
+SIMILAR PRODUCTS → PRIMARY RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 2
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-011     ComfortLayer Hoodie           Hoodie          Black         XL            1949
+SF-HO-006     CloudWarm Hoodie              Hoodie          Black         M             2099
+
+FINAL SIMILAR PRODUCTS
+----------------------------------------------------------------------------------------------------
+Count: 2
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-HO-011     ComfortLayer Hoodie           Hoodie          Black         XL            1949
+SF-HO-006     CloudWarm Hoodie              Hoodie          Black         M             2099
+
+SEARCH FINAL VERDICT
+Final primary product count  : 1
+Final similar product count  : 2
+Final recommendation category: Hoodie
+[21:18:25.086] SEARCH COMPLETE | search_product execution finished | results=1 | elapsed=995.5 ms
+
+====================================================================================================
+SEARCH PRODUCT | started=2026-09-04 21:18:58.000
+====================================================================================================
+RAW USER QUERY
+Query: show me red shoes
+
+SEARCH FILTERS
+--------------------------------------------------------------------------------
+Product Name   : None
+Category       : Shoes
+Keyword        : None
+Color          : red
+Size           : None
+Price Min      : None
+Price Max      : None
+Sort           : None
+Intent Type    : IntentType.SEARCH
+--------------------------------------------------------------------------------
+[21:18:58.000] SAFETY CHECK | Usable search filter detected: True | elapsed=0.8 ms
+Investigation: product_name=False
+Investigation: category=True
+Investigation: keyword=False
+Investigation: color=True
+Investigation: size=False
+Investigation: price_min=False
+Investigation: price_max=False
+Investigation: safety check passed → database search is allowed.
+[21:18:58.000] TIER 2 | No specific product_name → entering general category/attribute search | elapsed=0.9 ms
+Investigation: clean keyword = ''
+Investigation: applying CATEGORY filter = Shoes
+Investigation: applying COLOR filter = red
+[21:18:58.001] TIER 2 → PRIMARY QUERY | category=Shoes | keyword= | color=red | size=None | price_min=None | price_max=None | order=price ASC | elapsed=1.2 ms
+Investigation: executing TIER 2 PRIMARY database query NOW.
+Investigation: TIER 2 PRIMARY database query completed.
+[21:18:58.330] TIER 2 → PRIMARY QUERY | General filtered search | category=Shoes | keyword= | color=red | size=None | price_min=None | price_max=None | results=0 | elapsed=330.2 ms
+
+TIER 2 → PRIMARY QUERY RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 0
+[21:18:58.330] TIER 2 → FALLBACK 1 | Primary query returned 0 | preserving category='Shoes' | removing other restrictions | results=0 | elapsed=330.3 ms
+Investigation: executing category-preservation fallback.
+[21:18:58.372] TIER 2 → FALLBACK 1 | Category-only search | category=Shoes | results=0 | elapsed=372.9 ms
+
+TIER 2 → FALLBACK 1 RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 0
+[21:18:58.372] TIER 2 → FALLBACK 2 | No products from previous search | category=Shoes | searching color='red' | results=0 | elapsed=373.0 ms
+Investigation: executing color-only fallback.
+[21:18:58.415] TIER 2 → FALLBACK 2 | Color-only search | color=red | results=0 | elapsed=415.6 ms
+
+TIER 2 → FALLBACK 2 RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 0
+[21:18:58.415] TIER 2 → FALLBACK 4 | All previous searches returned 0 → entering multi-category store balancer | results=0 | elapsed=415.7 ms
+Investigation: fetching available categories.
+Investigation: category rows retrieved = 100
+Investigation: distinct categories = ['T-Shirt', 'Jeans', 'Shorts', 'Cap', 'Hoodie', 'Shirt', 'Joggers']
+Investigation: FALLBACK 4 querying category='T-Shirt' | limit=5
+Investigation: category='T-Shirt' returned 5 products
+Investigation: FALLBACK 4 querying category='Jeans' | limit=5
+Investigation: category='Jeans' returned 5 products
+Investigation: FALLBACK 4 querying category='Shorts' | limit=5
+Investigation: category='Shorts' returned 5 products
+Investigation: FALLBACK 4 querying category='Cap' | limit=5
+Investigation: category='Cap' returned 5 products
+Investigation: FALLBACK 4 querying category='Hoodie' | limit=5
+Investigation: category='Hoodie' returned 5 products
+Investigation: FALLBACK 4 querying category='Shirt' | limit=5
+Investigation: category='Shirt' returned 5 products
+Investigation: FALLBACK 4 querying category='Joggers' | limit=5
+Investigation: category='Joggers' returned 5 products
+[21:18:58.728] TIER 2 → FALLBACK 4 | Final multi-category balanced result | results=35 | elapsed=728.7 ms
+
+TIER 2 → FALLBACK 4 RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 35
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-T--004     DailyCotton T-Shirt           T-Shirt         Blue          XL             399
+SF-T--029     SmartCasual T-Shirt           T-Shirt         Black         XL             549
+SF-T--026     AlphaFit T-Shirt              T-Shirt         Navy          S              599
+SF-T--021     BoldEdge T-Shirt              T-Shirt         Blue          XL             649
+SF-T--020     CloudCotton T-Shirt           T-Shirt         Navy          M              749
+SF-JE-003     FlexDenim Jeans               Jeans           Grey          L              449
+SF-JE-007     StreetDenim Jeans             Jeans           Black         XXL            499
+SF-JE-002     BlueCraft Jeans               Jeans           White         M              499
+SF-JE-014     ComfortWash Jeans             Jeans           Grey          XXL            599
+SF-JE-012     PrimeDenim Jeans              Jeans           Olive         XXL            649
+SF-ST-004     CottonBreeze Shorts           Shorts          Navy          M              449
+SF-ST-003     BeachFlex Shorts              Shorts          Grey          M              649
+SF-ST-005     UrbanShort Shorts             Shorts          Olive         S             1249
+SF-ST-007     RunFlex Shorts                Shorts          Grey          M             1299
+SF-ST-001     SummerLite Shorts             Shorts          Grey          M             1849
+SF-CA-005     OutdoorPro Cap                Cap             Black         XXL            499
+SF-CA-001     ClassicCap Cap                Cap             Navy          M             1349
+SF-CA-004     StreetSnap Cap                Cap             White         L             1549
+SF-CA-003     SportShield Cap               Cap             Olive         L             2049
+SF-CA-００２     UrbanPeak Cap                 Cap             Blue          M             2099
+... 15 more products not displayed
+
+SORTING INVESTIGATION
+Sorting preference detected: None
+Normalized sorting value: 
+Investigation: no descending sort requested → default price ASC.
+Investigation: products sorted by price ASC.
+
+FINAL PRIMARY PRODUCTS AFTER SORTING
+----------------------------------------------------------------------------------------------------
+Count: 35
+SKU           NAME                          CATEGORY        COLOR         SIZE         PRICE
+--------------------------------------------------------------------------------------------
+SF-T--004     DailyCotton T-Shirt           T-Shirt         Blue          XL             399
+SF-SH-002     OfficePro Shirt               Shirt           White         M              399
+SF-JE-003     FlexDenim Jeans               Jeans           Grey          L              449
+SF-ST-004     CottonBreeze Shorts           Shorts          Navy          M              449
+SF-JO-001     AeroFit Joggers               Joggers         Blue          XL             449
+SF-JO-005     FlexMove Joggers              Joggers         White         M              449
+SF-JE-007     StreetDenim Jeans             Jeans           Black         XXL            499
+SF-JE-002     BlueCraft Jeans               Jeans           White         M              499
+SF-CA-005     OutdoorPro Cap                Cap             Black         XXL            499
+SF-T--029     SmartCasual T-Shirt           T-Shirt         Black         XL             549
+SF-HO-008     MinimalWarm Hoodie            Hoodie          White         XL             549
+SF-SH-005     ClassicCheck Shirt            Shirt           Blue          L              549
+SF-T--026     AlphaFit T-Shirt              T-Shirt         Navy          S              599
+SF-JE-014     ComfortWash Jeans             Jeans           Grey          XXL            599
+SF-HO-005     FleecePrime Hoodie            Hoodie          Blue          L              599
+SF-SH-007     BusinessFlex Shirt            Shirt           Grey          S              599
+SF-T--021     BoldEdge T-Shirt              T-Shirt         Blue          XL             649
+SF-JE-012     PrimeDenim Jeans              Jeans           Olive         XXL            649
+SF-ST-003     BeachFlex Shorts              Shorts          Grey          M              649
+SF-SH-008     WeekendWear Shirt             Shirt           Blue          XXL            649
+... 15 more products not displayed
+
+SIMILAR PRODUCTS INVESTIGATION
+Initial recommendation category: Shoes
+Investigation: recommendation category = Shoes
+Investigation: primary SKUs excluded = ['SF-T--004', 'SF-SH-002', 'SF-JE-003', 'SF-ST-004', 'SF-JO-001', 'SF-JO-005', 'SF-JE-007', 'SF-JE-002', 'SF-CA-005', 'SF-T--029', 'SF-HO-008', 'SF-SH-005', 'SF-T--026', 'SF-JE-014', 'SF-HO-005', 'SF-SH-007', 'SF-T--021', 'SF-JE-012', 'SF-ST-003', 'SF-SH-008', 'SF-SH-013', 'SF-T--020', 'SF-JO-009', 'SF-HO-002', 'SF-HO-012', 'SF-JO-007', 'SF-JO-008', 'SF-HO-007', 'SF-ST-005', 'SF-ST-007', 'SF-CA-001', 'SF-CA-004', 'SF-ST-001', 'SF-CA-003', 'SF-CA-００２']
+Investigation: recommendation query created.
+Investigation: recommendation category filter = Shoes
+Investigation: excluding primary product SKUs from recommendations.
+Investigation: recommendation COLOR filter = red
+Investigation: executing recommendation query | limit=5
+[21:18:58.768] SIMILAR PRODUCTS → PRIMARY | category=Shoes | color=red | excluded_skus=35 | results=0 | elapsed=768.9 ms
+
+SIMILAR PRODUCTS → PRIMARY RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 0
+[21:18:58.768] SIMILAR PRODUCTS → FALLBACK | Recommendation query returned 0 → removing color restriction | results=0 | elapsed=769.0 ms
+[21:18:58.802] SIMILAR PRODUCTS → FALLBACK | category=Shoes | excluded_skus=35 | results=0 | elapsed=802.6 ms
+
+SIMILAR PRODUCTS → FALLBACK RESULTS
+----------------------------------------------------------------------------------------------------
+Count: 0
+
+FINAL SIMILAR PRODUCTS
+----------------------------------------------------------------------------------------------------
+Count: 0
+
+SEARCH FINAL VERDICT
+Final primary product count  : 35
+Final similar product count  : 0
+Final recommendation category: Shoes
+[21:18:58.802] SEARCH COMPLETE | search_product execution finished | results=35 | elapsed=802.7 ms

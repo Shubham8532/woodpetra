@@ -1,0 +1,1163 @@
+============================================================
+ISSUE #001
+============================================================
+
+STATUS:
+[OBSERVED]
+
+AREA:
+extract_intent
+
+TYPE:
+Intent / Product Name Extraction
+
+------------------------------------------------------------
+OBSERVED BEHAVIOR
+------------------------------------------------------------
+
+User query:
+
+    what about same for black thsirts
+
+ShoppingIntentModel output:
+
+    category     = T-Shirt
+    product_name = black T-Shirt
+    color        = black
+
+------------------------------------------------------------
+EXPECTED BEHAVIOR
+------------------------------------------------------------
+
+`product_name` should represent an actual product name.
+
+For this query, the color/category appear to be:
+
+    color    = black
+    category = T-Shirt
+
+There does not appear to be an explicit product name in
+the user's current query.
+
+------------------------------------------------------------
+ACTUAL BEHAVIOR
+------------------------------------------------------------
+
+The LLM returned:
+
+    product_name = "black T-Shirt"
+
+while also returning:
+
+    color    = "black"
+    category = "T-Shirt"
+
+------------------------------------------------------------
+WHERE OBSERVED
+------------------------------------------------------------
+
+Node:
+    extract_intent
+
+Field:
+    ShoppingIntentModel.product_name
+
+------------------------------------------------------------
+EVIDENCE
+------------------------------------------------------------
+
+Query:
+    what about same for black thsirts
+
+Result:
+    product_name = black T-Shirt
+    category     = T-Shirt
+    color        = black
+
+------------------------------------------------------------
+CURRENT HYPOTHESIS
+------------------------------------------------------------
+
+Unknown.
+
+Possible source needs to be investigated later:
+
+    - intent prompt / extraction instructions
+    - conversation history supplied to LLM
+    - model behavior
+    - product-name inference rule
+
+DO NOT MODIFY YET.
+
+------------------------------------------------------------
+ROOT CAUSE
+------------------------------------------------------------
+
+[NOT IDENTIFIED YET]
+
+------------------------------------------------------------
+FIX
+------------------------------------------------------------
+
+[NOT DECIDED YET]
+
+------------------------------------------------------------
+REGRESSION TEST
+------------------------------------------------------------
+
+[TO BE ADDED AFTER ROOT CAUSE IS CONFIRMED]
+
+
+################################
+
+============================================================
+ISSUE #002
+============================================================
+
+STATUS:
+[OBSERVED]
+
+AREA:
+extract_intent
+
+TYPE:
+State / Previous Turn Visibility
+
+------------------------------------------------------------
+OBSERVED BEHAVIOR
+------------------------------------------------------------
+
+First turn:
+
+    User:
+        do u have blu tshrts under 500... xl size
+
+    turn_slots produced:
+
+        category   = T-Shirt
+        color      = blue
+        size       = XL
+        price_max  = 500
+
+Second turn:
+
+    User:
+        what about same for black thsirts
+
+At the beginning of the second `extract_intent` call,
+the logging code reads:
+
+    state.get("turn_slots")
+
+But the logged previous values are:
+
+    category   = None
+    color      = None
+    size       = None
+    price_max  = None
+
+------------------------------------------------------------
+EXPECTED / QUESTION TO INVESTIGATE
+------------------------------------------------------------
+
+Need to determine where the previous turn's state actually
+exists and what `extract_intent` receives at the beginning
+of each invocation.
+
+Important distinction:
+
+    Conversation history
+        → available to the LLM
+
+    state["turn_slots"]
+        → currently does not show the previous turn's values
+
+This does NOT automatically mean the system is broken.
+
+It needs to be traced through the actual graph/state flow.
+
+------------------------------------------------------------
+WHERE OBSERVED
+------------------------------------------------------------
+
+Node:
+    extract_intent
+
+Field:
+    state["turn_slots"]
+
+------------------------------------------------------------
+EVIDENCE
+------------------------------------------------------------
+
+First turn current turn_slots:
+
+    category   = T-Shirt
+    color      = blue
+    size       = XL
+    price_max  = 500
+
+Second turn logger:
+
+    Previous:
+        category   = None
+        color      = None
+        size       = None
+        price_max  = None
+
+At the same time:
+
+    active_category = T-Shirt
+
+and the LLM successfully produced:
+
+    category = T-Shirt
+    color    = black
+    size     = None
+    price_max = None
+
+------------------------------------------------------------
+CURRENT HYPOTHESIS
+------------------------------------------------------------
+
+Unknown.
+
+Need to inspect:
+
+    - how state is created for a new turn
+    - how checkpoint state is loaded
+    - how turn_slots is written
+    - how the next invocation receives state
+    - relationship between checkpoint/history and turn_slots
+
+DO NOT MODIFY YET.
+
+------------------------------------------------------------
+ROOT CAUSE
+------------------------------------------------------------
+
+[NOT IDENTIFIED YET]
+
+------------------------------------------------------------
+FIX
+------------------------------------------------------------
+
+[NOT DECIDED YET]
+
+------------------------------------------------------------
+REGRESSION TEST
+------------------------------------------------------------
+
+[TO BE ADDED]
+
+
+============================================================
+DEBUGGING RULES
+============================================================
+
+1. OBSERVE FIRST
+   Never change behavior merely because a log looks suspicious.
+
+2. TRACE THE FIRST WRONG VALUE
+   Find the first node where the value becomes incorrect.
+
+3. DO NOT ASSUME
+   "Memory", "state", "history", "checkpoint", etc. must be
+   traced through the actual code.
+
+4. ONE CHANGE AT A TIME
+   Avoid combining multiple fixes.
+
+5. REPRODUCE BEFORE FIXING
+   A suspected bug becomes CONFIRMED only after a repeatable
+   test demonstrates the problem.
+
+6. REGRESSION TEST
+   Every confirmed/fixed bug gets a test so it cannot silently
+   return later.
+
+7. LOGGING MUST BE PASSIVE
+   Logging must never:
+       - modify state
+       - modify LLM output
+       - modify prompts
+       - change routing
+       - change persistence
+       - infer values that aren't actually present
+
+   Logger = observation only.
+
+
+
+============================================================
+ISSUE #003
+============================================================
+
+
+ARCHITECTURE ISSUE — Context Decision Ordering
+
+Current:
+router → context_decision → extract_intent
+
+Problem:
+context_decision depends on state["intent"], but intent is only
+created by extract_intent.
+
+Therefore context_decision currently runs before intent exists
+and usually produces context_route="context".
+
+Current routing still proceeds through route_post_sync based on
+router's route, so shopping queries eventually reach extract_intent.
+
+Planned fix:
+router → extract_intent → context_decision
+
+Then context_decision can reliably use:
+- search
+- details
+- compare
+- recommend
+
+to decide:
+- context_route=SEARCH
+- context_route=CONTEXT
+
+Do not modify architecture during current logging/debugging pass.
+
+START
+  ↓
+reset_turn_slots
+  ↓
+router
+  ↓
+[shopping]
+  ↓
+post_sync
+  ↓
+extract_intent
+  ↓
+context_decision
+  ↓
+context_route
+ ┌──────────────┴──────────────┐
+ ↓                             ↓
+SEARCH                       CONTEXT
+ ↓                             ↓
+search DB                  context-based handling
+
+===============================
+
+
+============================================================
+ISSUE #004
+============================================================
+
+
+BUG / ARCHITECTURE ISSUE — LOAD HISTORY WINDOW
+
+Current implementation limits history using the latest 12 LangGraph
+snapshots, not 12 conversation turns.
+
+A single user turn can create multiple workflow checkpoints, so
+"12 snapshots ≈ 3–4 turns" is only an assumption and may change
+depending on graph execution.
+
+Additionally, load_history currently returns the full snapshot state
+for each retained query/response, including products, intents,
+selected_product, turn_slots, etc. This can make the history large
+and may expose stale workflow state to downstream LLMs.
+
+Current behavior is functional, but the history selection/window
+should later be redesigned around actual conversation turns and
+explicitly selected historical fields.
+
+Do not change architecture now.
+
+
+
+============================================================
+ISSUE #005
+============================================================
+
+BUG / RELIABILITY ISSUE — HISTORY QUERY/RESPONSE PAIRING
+
+The conversation history currently contains incorrect query/response
+pairings in some cases.
+
+A history record can contain the current user query together with the
+response generated for the previous turn.
+
+This means build_conversation() may receive a record where the query
+and response do not actually belong to the same conversation turn.
+
+Example:
+
+Current conversation:
+
+User:
+do u have summerlite short
+
+Assistant:
+Yes, we have the SummerLite Shorts in Grey, size M, priced at ₹1849.
+
+User:
+what about blue color
+
+
+However, the history passed to build_conversation() currently shows:
+
+User: do u have summerlite short
+Assistant: Yes, we have the SummerLite Shorts in Grey, size M, priced at ₹1849.
+
+User: what about blue color
+Assistant: Yes, we have the SummerLite Shorts in Grey, size M, priced at ₹1849.
+
+
+The second Assistant response belongs to the previous query rather than
+"what about blue color".
+
+This means the history itself is semantically incorrect before
+build_conversation() processes it.
+
+
+WHY THIS IS A PROBLEM
+---------------------
+
+build_conversation() assumes that each history item contains a matching:
+
+    query + response
+
+pair.
+
+If load_history() returns mismatched query/response data, then
+build_conversation() faithfully formats the incorrect pair and passes
+it to the downstream LLM.
+
+The LLM may therefore interpret an old answer as the answer to a newer
+question.
+
+This can directly affect follow-up understanding and response
+reliability.
+
+
+OBSERVED EFFECT
+---------------
+
+For the query:
+
+    what about blue color
+
+the system should understand that the user is asking for a blue variant
+of the previously discussed SummerLite Shorts.
+
+Instead, the conversation history can make it appear as though the
+assistant already answered "what about blue color" with the Grey
+SummerLite Shorts response.
+
+
+FUTURE FIX
+----------
+
+History records should be associated with the actual conversation turn
+that produced them.
+
+The history-loading logic should later ensure that query, assistant
+response, and any associated structured state belong to the same turn.
+
+Potentially introduce explicit turn-level identification/order rather
+than assuming that a checkpoint snapshot itself represents a complete
+conversation turn.
+
+
+Do not change architecture now.
+============================================================
+
+============================================================
+ISSUE #006
+============================================================
+
+
+BUG / ARCHITECTURE ISSUE — GENERAL CHAT INTENT AVAILABILITY
+
+The current general_chat logic uses the following condition:
+
+    if intent_str == "greeting":
+        preserve last_bot_action
+    else:
+        set last_bot_action = "offered_alternatives"
+
+
+However, general_chat can be reached before extract_intent has populated
+the state["intent"] value.
+
+In the observed execution, context_decision runs before extract_intent.
+
+For a greeting such as:
+
+    hi
+
+the logs show:
+
+    context_decision
+        intent = None
+        ↓
+    general_chat
+        ↓
+    intent_str = ''
+        ↓
+    else branch
+        ↓
+    last_bot_action = 'offered_alternatives'
+
+
+Observed log:
+
+    [general_chat] intent='' next_last_bot_action='offered_alternatives'
+
+
+This means an unavailable/unevaluated intent is currently being treated
+as if it were a non-greeting / out-of-catalog intent.
+
+
+WHY THIS IS A PROBLEM
+---------------------
+
+There are multiple distinct states:
+
+    intent = greeting
+    intent = food / non-apparel / out-of-catalog
+    intent = shopping intent
+    intent = None / not yet extracted
+
+The current general_chat condition effectively groups:
+
+    intent = None
+
+together with:
+
+    non-greeting / out-of-catalog
+
+
+This can incorrectly modify last_bot_action and affect routing on the
+next user turn.
+
+
+OBSERVED EXAMPLE
+----------------
+
+Turn 1:
+
+    User: hi
+
+Intent:
+
+    None
+
+Current result:
+
+    last_bot_action = offered_alternatives
+
+
+Then the next turn sees:
+
+    last_bot_action = offered_alternatives
+
+instead of the previous signal being preserved/neutral.
+
+
+POSSIBLE ARCHITECTURAL CONTRIBUTION
+-----------------------------------
+
+The current graph appears to perform context_decision before
+extract_intent.
+
+Therefore, intent may legitimately be unavailable at the point where
+general_chat is executed.
+
+However, the exact fix should be determined after reviewing the complete
+graph routing and intent-extraction flow.
+
+The issue is therefore not simply "context_decision is wrong".
+
+The larger issue is that general_chat assumes that a missing intent can
+be interpreted as a non-greeting intent.
+
+
+FUTURE FIX
+----------
+
+Handle "intent unavailable" separately from "intent is not greeting".
+
+The graph may also need to be reviewed so that nodes which depend on
+intent only execute after intent extraction, where appropriate.
+
+The final solution should preserve correct behavior for:
+
+    greeting
+    non-apparel / out-of-catalog query
+    shopping query
+    unavailable intent
+
+
+Do not change architecture now.
+========================================
+
+
+
+============================================================
+ISSUE #007
+============================================================
+
+
+BUG / ARCHITECTURE ISSUE — CURRENT TURN SLOTS VS INHERITED
+SHOPPING CONTEXT
+
+The current shopping-memory design does not clearly separate:
+
+    1. values extracted from the current user query
+    2. values inherited from previous shopping turns
+    3. the final effective context used for the current search
+
+
+Example conversation:
+
+Turn 1:
+
+    User:
+    do u have blue hoodies under 1k xl size
+
+The current shopping intent contains:
+
+    category     = Hoodies
+    color        = Blue
+    size         = XL
+    price_max    = 1000
+
+
+Turn 2:
+
+    User:
+    what about same in L size
+
+The user only changed the size.
+
+The CURRENT TURN should therefore represent:
+
+    turn_slots:
+        size = L
+
+
+But the EFFECTIVE SEARCH CONTEXT should become:
+
+    category     = Hoodies      ← inherited
+    color        = Blue         ← inherited
+    price_max    = 1000         ← inherited
+    size         = L            ← current turn
+
+
+Turn 3:
+
+    User:
+    what about same in white color
+
+The CURRENT TURN should represent:
+
+    turn_slots:
+        color = White
+
+
+The EFFECTIVE SEARCH CONTEXT should become:
+
+    category     = Hoodies      ← inherited
+    color        = White        ← current turn
+    size         = L            ← inherited
+    price_max    = 1000         ← inherited
+
+
+WHY THIS IS A PROBLEM
+---------------------
+
+If current and inherited values are not explicitly separated, it becomes
+difficult to determine:
+
+    - what the user changed
+    - what should be retained
+    - what should be replaced
+    - what should be reset
+    - what should be passed to search
+    - whether an old value is stale
+
+
+This can cause follow-up queries to either lose useful constraints or
+incorrectly retain previous constraints.
+
+
+FUTURE ARCHITECTURE
+-------------------
+
+Introduce a clear distinction between:
+
+    CURRENT TURN SLOTS
+    ------------------
+    Values explicitly introduced/changed by the current query.
+
+
+    INHERITED CONTEXT
+    -----------------
+    Relevant shopping constraints carried from previous turns.
+
+
+    EFFECTIVE CONTEXT
+    -----------------
+    Inherited context + current turn changes after applying the
+    appropriate merge/reset rules.
+
+
+Example logging:
+
+    CURRENT QUERY
+    -------------
+    what about blue color
+
+    INHERITED CONTEXT
+    -----------------
+    category     : Shorts
+    product_name : SummerLite Short
+    size         : M
+    price        : ₹1849
+    color        : Grey
+
+    CURRENT TURN SLOTS
+    ------------------
+    color        : Blue
+
+    EFFECTIVE CONTEXT
+    -----------------
+    category     : Shorts
+    product_name : SummerLite Short
+    size         : M
+    color        : Blue
+
+
+The effective context should then be used by the search/filtering
+logic.
+
+
+Do not change architecture now.
+============================================================
+
+
+============================================================
+ISSUE #008
+============================================================
+
+
+BUG / ARCHITECTURE ISSUE — SHOPPING CONTEXT RESET FOR NEW QUERIES
+
+Once shopping information has been accumulated from previous turns,
+the system needs to distinguish between:
+
+    FOLLOW-UP / REFINEMENT
+
+and:
+
+    NEW SHOPPING REQUEST
+
+
+A follow-up should inherit relevant previous context.
+
+A genuinely new shopping query should replace/reset the old shopping
+context where appropriate.
+
+
+Example:
+
+Turn 1:
+
+    User:
+    do u have blue hoodies under 1k xl size
+
+Active context:
+
+    category     = Hoodies
+    color        = Blue
+    size         = XL
+    price_max    = 1000
+
+
+Turn 2:
+
+    User:
+    what about same in L size
+
+This is a follow-up.
+
+Expected effective context:
+
+    category     = Hoodies
+    color        = Blue
+    size         = L
+    price_max    = 1000
+
+
+However, if the user later asks:
+
+    show me black jeans under 2000
+
+this should be treated as a new shopping request rather than:
+
+    category     = Hoodies
+    color        = Black
+    size         = L
+    price_max    = 2000
+
+
+The previous hoodie context should not accidentally contaminate the
+new jeans search.
+
+
+WHY THIS IS A PROBLEM
+---------------------
+
+Without explicit reset/replacement rules, inherited shopping values can
+remain active longer than intended.
+
+This can produce searches with stale:
+
+    category
+    product_name
+    color
+    size
+    price
+    material
+    fit
+    brand
+    etc.
+
+
+FUTURE FIX
+----------
+
+Make reset_turn_slots / shopping-context management smarter.
+
+The system should determine whether the new query is:
+
+    - a continuation
+    - a refinement
+    - a replacement of one constraint
+    - a completely new shopping request
+
+
+Then apply appropriate context inheritance or reset behavior.
+
+
+Do not change architecture now.
+============================================================
+
+
+============================================================
+ISSUE #009
+============================================================
+
+
+BUG / ARCHITECTURE ISSUE — BUILD CONVERSATION DISCARDS STRUCTURED
+HISTORICAL INFORMATION
+
+The current build_conversation() function converts each history record
+primarily into:
+
+    User: <query>
+    Assistant: <shortened response>
+
+
+Although the checkpoint/history record may contain additional
+structured information such as:
+
+    intent
+    category
+    product_name
+    color
+    size
+    price
+    turn_slots
+    products
+    similar_products
+    selected_product
+    etc.
+
+
+these fields are currently not directly represented in the
+history_text sent to the general_chat LLM.
+
+
+CURRENT EXAMPLE
+---------------
+
+Previous turn:
+
+    User:
+    do u have summerlite short
+
+    Assistant:
+    Yes, we have the SummerLite Shorts in Grey, size M, priced at ₹1849.
+
+
+The underlying state may contain structured information such as:
+
+    category     = Shorts
+    product_name = SummerLite Short
+    color        = Grey
+    size         = M
+    price        = 1849
+
+
+But build_conversation() mainly produces:
+
+    User: do u have summerlite short
+    Assistant: Yes, we have the SummerLite Shorts in Grey, size M,
+    priced at ₹1849.
+
+
+Therefore the LLM has to reconstruct important product/context
+information from natural-language response text instead of receiving
+the structured information directly.
+
+
+WHY THIS MATTERS
+----------------
+
+Follow-up queries often contain incomplete references:
+
+    what about blue color
+    same in L
+    what about white
+    how much was it
+    which size did I ask for
+    show me that one again
+
+
+These queries depend heavily on previous structured information.
+
+
+Future memory should therefore preserve the relevant semantic/product
+details without passing the entire raw checkpoint state to the LLM.
+
+
+FUTURE ARCHITECTURE
+-------------------
+
+build_conversation() should eventually produce a compact memory
+representation containing both:
+
+    RECENT CONVERSATION
+    +
+    RELEVANT STRUCTURED CONTEXT
+
+
+For example:
+
+    CURRENT QUERY
+    -------------
+    what about blue color
+
+    INHERITED CONTEXT
+    -----------------
+    category     : Shorts
+    product_name : SummerLite Short
+    size         : M
+    previous_color : Grey
+    previous_price : ₹1849
+
+    RECENT CONVERSATION
+    -------------------
+    User: do u have summerlite short
+    Assistant: Yes, we have the SummerLite Shorts in Grey, size M,
+    priced at ₹1849.
+
+
+    CURRENT TURN SLOTS
+    ------------------
+    color = Blue
+
+
+    EFFECTIVE CONTEXT
+    -----------------
+    category     : Shorts
+    product_name : SummerLite Short
+    size         : M
+    color        : Blue
+
+
+The representation should remain compact so that unnecessary checkpoint
+state is not sent to the LLM.
+
+
+Do not change architecture now.
+============================================================
+
+
+
+============================================================
+ISSUE #010
+============================================================
+
+
+ARCHITECTURE / MEMORY QUALITY ISSUE — RESPONSE TRUNCATION
+
+build_conversation() currently truncates cleaned assistant responses
+to 120 characters.
+
+Current behavior:
+
+    short_response = clean_response[:120] + "..."
+
+
+This reduces the amount of historical text sent to the LLM and helps
+control token usage.
+
+However, important product information may appear after the first
+120 characters.
+
+
+Example:
+
+    We don't have SummerLite Shorts in Blue. However, we found
+    CargoLite Shorts in Blue, XL, priced at ₹2149, which may be
+    suitable...
+
+
+After truncation, the LLM may receive only:
+
+    We don't have SummerLite Shorts in Blue. However, we found
+    CargoLite...
+
+
+Important details such as:
+
+    product name
+    color
+    size
+    price
+
+
+may therefore be lost.
+
+
+WHY THIS MATTERS
+----------------
+
+A short response is useful for token reduction, but historical
+conversation should still preserve the information required for
+follow-up questions.
+
+
+FUTURE FIX
+----------
+
+Do not simply increase the character limit blindly.
+
+Instead, consider keeping:
+
+    - compact structured product/context data
+    - concise semantic assistant response
+    - only relevant historical details
+
+
+This should provide better memory quality without sending large UI
+responses or complete checkpoint state to the LLM.
+
+
+Do not change architecture now.
+============================================================
+
+
+
+============================================================
+ISSUE #011
+============================================================
+
+
+ARCHITECTURE / MEMORY QUALITY ISSUE — UI RESPONSE VS SEMANTIC MEMORY
+
+The assistant response returned to the frontend may contain a large
+amount of UI-specific product-card content.
+
+For example:
+
+    **Hoodies**
+
+    MinimalWarm Hoodie
+    White • XL • In Stock
+    ₹549
+    View Item
+
+    FleecePrime Hoodie
+    Blue • L • In Stock
+    ₹599
+    View Item
+
+    ...
+
+
+This UI content is useful for rendering the frontend but should not
+necessarily be treated as conversational memory.
+
+
+The current build_conversation() therefore has to perform cleanup such
+as:
+
+    split("Matching Items")
+    split("Tap below")
+    replace("\n", " ")
+
+
+to prevent UI content from entering the history prompt.
+
+
+WHY THIS MATTERS
+----------------
+
+The system currently mixes two concepts:
+
+    conversational answer
+    frontend rendering data
+
+
+This makes memory cleaning dependent on the formatting of the UI
+response.
+
+
+FUTURE ARCHITECTURE
+-------------------
+
+Keep semantic conversation memory separate from UI product-card data.
+
+For example:
+
+    CONVERSATIONAL MEMORY
+    ---------------------
+    "We don't have the requested blue SummerLite Shorts. We found
+    CargoLite Shorts in blue, XL, ₹2149."
+
+
+    STRUCTURED PRODUCT DATA
+    -----------------------
+    product_name
+    color
+    size
+    price
+    product_id
+    etc.
+
+
+    UI RENDERING
+    ------------
+    Product cards / buttons / links
+
+
+This would remove the need to recover semantic information from
+frontend-formatted responses.
+
+
+Do not change architecture now.
+============================================================
