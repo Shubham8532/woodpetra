@@ -33,6 +33,25 @@ razorpay_client = razorpay.Client(
     auth=(os.environ.get("RAZORPAY_KEY_ID"), os.environ.get("RAZORPAY_KEY_SECRET"))
 )
 
+
+############# HELPER COLOR for LOGGING #####################
+# terminal colors
+RESET = "\033[0m"
+
+HEADER_COLOR = "\033[96m"       # Cyan
+FLOW_COLOR = "\033[93m"       # Yellow
+
+def log_header(title):
+    print(HEADER_COLOR)
+    print("\n" + "=" * 80)
+    print(title)
+    print("=" * 80 + RESET)
+
+
+def log_flow(text):
+    print(FLOW_COLOR + text + RESET)
+################################################
+
 # def invoke_with_fallback(messages, schema=None):
 #     """
 #     Executes primary 70B model with instant failover to 120B on rate limit or error.
@@ -224,9 +243,12 @@ def router(state: ShoppingState):
     def log_router_state(query, last_bot_action, result):
         route = result.route.value
 
-        print("\n" + "=" * 80)
-        print("ROUTER")
-        print("=" * 80)
+        # print(ROUTER_COLOR)
+
+        # print("\n" + "=" * 80)
+        # print("ROUTER")
+        # print("=" * 80)
+        log_header("ROUTER")
 
         print("\nINPUT")
         print("-" * 80)
@@ -238,29 +260,31 @@ def router(state: ShoppingState):
         print("\nFLOW")
         print("-" * 80)
 
-        print(
+        log_flow(
             f"""
-            ┌──────────────────────────────────────────────┐
-            │ USER QUERY                                   │
-            │ {str(query):<44} │
-            └──────────────────────┬───────────────────────┘
-                                │
-                                ▼
-            ┌──────────────────────────────────────────────┐
-            │ ROUTER                                       │
-            │ query + last_bot_action                      │
-            └──────────────────────┬───────────────────────┘
-                                │
-                            route = {route}
-                                │
-                                ▼
-            ┌──────────────────────────────────────────────┐
-            │ {route.upper() + " WORKFLOW":<44} │
-            └──────────────────────────────────────────────┘
-            """
+                ┌──────────────────────────────────────────────┐
+                │ USER QUERY                                   │
+                │ {str(query):<44} │
+                └──────────────────────┬───────────────────────┘
+                                    │
+                                    ▼
+                ┌──────────────────────────────────────────────┐
+                │ ROUTER                                       │
+                │ query + last_bot_action                      │
+                └──────────────────────┬───────────────────────┘
+                                    │
+                                route = {route}
+                                    │
+                                    ▼
+                ┌──────────────────────────────────────────────┐
+                │ {route.upper() + " WORKFLOW":<44} │
+                └──────────────────────────────────────────────┘
+                """
         )
 
         print("=" * 80)
+
+        print(RESET)
 
 
     log_router_state(
@@ -422,9 +446,10 @@ def log_general_chat_llm_context(
     prompt,
     system_prompt
 ):
-    print("\n" + "=" * 80)
-    print("GENERAL CHAT — LLM CONTEXT")
-    print("=" * 80)
+    # print("\n" + "=" * 80)
+    # print("GENERAL CHAT — LLM CONTEXT")
+    # print("=" * 80)
+    log_header("GENERAL CHAT — LLM CONTEXT")
 
     print("\nCURRENT QUERY")
     print("-" * 80)
@@ -438,13 +463,13 @@ def log_general_chat_llm_context(
     print("-" * 80)
     print(history_text if history_text else "No conversation history.")
 
-    print("\nFINAL HUMAN PROMPT")
-    print("-" * 80)
-    print(prompt)
+    # print("\nFINAL HUMAN PROMPT")
+    # print("-" * 80)
+    # print(prompt)
 
-    print("\nSYSTEM PROMPT")
-    print("-" * 80)
-    print(system_prompt)
+    # print("\nSYSTEM PROMPT")
+    # print("-" * 80)
+    # print(system_prompt)
 
     print("\nPROMPT SIZE")
     print("-" * 80)
@@ -492,14 +517,14 @@ Current User Query:
     # print(config)
 
     # print("history =", history)
-    from pprint import pprint
+    # from pprint import pprint
 
-    print("=" * 80)
-    print("HISTORY")
-    pprint(history)
-    print("=" * 80)
+    # print("=" * 80)
+    # print("HISTORY")
+    # pprint(history)
+    # print("=" * 80)
 
-    print ("above is in json format..and below is in structured format")
+    # print ("above is in json format..and below is in structured format")
     ################## LOGGING CALL ##################
     log_general_chat_llm_context(
         query=state["query"],
@@ -593,24 +618,15 @@ def log_build_conversation_state(
     history_text,
     active_category
 ):
-    print("\n" + "=" * 80)
-    print("BUILD CONVERSATION")
-    print("=" * 80)
+    # print("\n" + "=" * 80)
+    # print("BUILD CONVERSATION")
+    # print("=" * 80)
+    log_header("BUILD CONVERSATION")
 
     print("\nINPUT")
     print("-" * 80)
     print(f"History records received : {len(history)}")
     print(f"Max turns                : {max_turns}")
-
-    print("\nPROCESSING")
-    print("-" * 80)
-    print("• Reads history newest → oldest")
-    print("• Finds latest non-null category")
-    print("• Removes repeated queries")
-    print("• Cleans UI text from responses")
-    print("• Truncates responses to 120 characters")
-    print(f"• Keeps maximum {max_turns} turns")
-    print("• Reverses final order to oldest → newest")
 
     print("\nOUTPUT")
     print("-" * 80)
@@ -828,9 +844,10 @@ CONTEXT & ATTRIBUTES:
         turn_slots_dict,
         previous_turn_slots
     ):
-        print("\n" + "=" * 80)
-        print("EXTRACT INTENT")
-        print("=" * 80)
+        # print("\n" + "=" * 80)
+        # print("EXTRACT INTENT")
+        # print("=" * 80)
+        log_header("EXTRACT INTENT")
 
         # ======================== INPUT ========================
 
@@ -973,9 +990,10 @@ def log_context_decision_state(intent, context_route):
     else:
         next_branch = "CONTEXT BRANCH"
 
-    print("\n" + "=" * 80)
-    print("CONTEXT DECISION")
-    print("=" * 80)
+    # print("\n" + "=" * 80)
+    # print("CONTEXT DECISION")
+    # print("=" * 80)
+    log_header("CONTEXT DECISION")
 
     print("\nINPUT")
     print("-" * 80)
@@ -986,7 +1004,7 @@ def log_context_decision_state(intent, context_route):
     print("\nFLOW")
     print("-" * 80)
 
-    print(
+    log_flow(
         f"""
         ┌──────────────────────────────────────────────┐
         │ SHOPPING WORKFLOW                            │
@@ -1145,6 +1163,7 @@ def decide_context(state: ShoppingState):
     """
 
     return state['context_route']
+
 
 ########################## LOGGING (search_product) ##########################
 
@@ -1358,6 +1377,172 @@ def log_search_query(
     except Exception:
         pass
 
+# ============================================================
+# HUMAN-READABLE TERMINAL LOGGER
+# ============================================================
+
+def terminal_search_log(message=""):
+    """
+    Human-readable terminal logging only.
+
+    This is intentionally separate from developer logging
+    written to retrieved_products.txt.
+    """
+    try:
+        print(message)
+    except Exception:
+        pass
+
+def terminal_search_header(query):
+    try:
+        print()
+        # print("═" * 80)
+        # print("SEARCH PRODUCT")
+        # print("═" * 80)
+        log_header("SEARCH PRODUCT")
+
+        print(f"Query : {query}")
+
+    except Exception:
+        pass
+
+
+def terminal_search_intent(intent):
+    try:
+        intent_type = getattr(intent, "intent", None)
+        category = getattr(intent, "category", None)
+
+        filters = []
+
+        if getattr(intent, "product_name", None):
+            filters.append(f"product={intent.product_name}")
+
+        if getattr(intent, "keyword", None):
+            filters.append(f"keyword={intent.keyword}")
+
+        if getattr(intent, "color", None):
+            filters.append(f"color={intent.color}")
+
+        if getattr(intent, "size", None):
+            size = (
+                intent.size.value
+                if hasattr(intent.size, "value")
+                else intent.size
+            )
+            filters.append(f"size={size}")
+
+        if getattr(intent, "price_min", None) is not None:
+            filters.append(f"min=₹{intent.price_min}")
+
+        if getattr(intent, "price_max", None) is not None:
+            filters.append(f"max=₹{intent.price_max}")
+
+        print()
+        print("INTENT")
+        print(f"  Type     : {intent_type}")
+        print(f"  Category : {category}")
+        print(
+            f"  Filters  : "
+            f"{', '.join(filters) if filters else 'none'}"
+        )
+
+    except Exception:
+        pass
+
+
+def terminal_search_path_start():
+    try:
+        print()
+        print("SEARCH PATH")
+    except Exception:
+        pass
+
+
+def terminal_search_path(
+    name,
+    why,
+    result_count=None,
+    extra=None
+):
+    try:
+        print()
+        print(f"  → {name}")
+        print(f"      Why    : {why}")
+
+        if extra:
+            print(f"      Detail : {extra}")
+
+        if result_count is not None:
+            print(f"      Result : {result_count}")
+
+    except Exception:
+        pass
+
+
+def terminal_sort_log(sort_pref, products_count):
+    try:
+        print()
+        print("SORT")
+
+        if not products_count:
+            print("  → No products available for sorting")
+            return
+
+        sort_val = str(sort_pref if sort_pref else "").lower()
+
+        if "price_desc" in sort_val or "desc" in sort_val:
+            print("  → Price descending")
+        else:
+            print("  → Price ascending (default)")
+
+    except Exception:
+        pass
+
+
+def terminal_similar_start(category):
+    try:
+        print()
+        print("SIMILAR PRODUCTS")
+
+        if category:
+            print(f"  Category : {category}")
+        else:
+            print("  Category : none")
+
+    except Exception:
+        pass
+
+
+def terminal_similar_step(name, why, result_count):
+    try:
+        print(f"  → {name}")
+        print(f"      Why    : {why}")
+        print(f"      Result : {result_count}")
+    except Exception:
+        pass
+
+
+def terminal_search_result(
+    products_count,
+    similar_count,
+    elapsed_ms
+):
+    try:
+        print()
+        print("RESULT")
+        print(f"  Products returned : {products_count}")
+        print(f"  Similar products  : {similar_count}")
+
+        print()
+        print(
+            f"✓ SEARCH COMPLETE | "
+            f"{elapsed_ms:.1f} ms"
+        )
+
+        print("═" * 80)
+
+    except Exception:
+        pass
 #######################################################
 
 @traceable(name="Search Product", description="Query Supabase using the extracted shopping intent with a 2-Tier strategy and smart fallbacks.")
@@ -1408,6 +1593,10 @@ def search_product(state: ShoppingState) -> ShoppingState:
     raw_query = state.get('query', '').lower()
 
 #################### AGAIN LOGGING CALL --> ####################
+    # HUMAN-READABLE TERMINAL LOGGING
+    terminal_search_header(raw_query)
+    terminal_search_intent(intent)
+
     log_search(
         "RAW USER QUERY",
         handle=search_log_handle
@@ -1573,6 +1762,21 @@ def search_product(state: ShoppingState) -> ShoppingState:
             search_start,
             0
         )
+        terminal_search_path_start()
+
+        terminal_search_path(
+            "Search blocked",
+            "No usable shopping filters were extracted from the query",
+            0
+        )
+
+        terminal_search_result(
+            products_count=0,
+            similar_count=0,
+            elapsed_ms=(
+                time.perf_counter() - search_start
+            ) * 1000
+        )
         #########################################
 
         print("Extracted Intent:", intent)
@@ -1598,6 +1802,12 @@ def search_product(state: ShoppingState) -> ShoppingState:
     if intent.product_name:
 
         ################ LOGGING CALL #################
+        terminal_search_path_start()
+        terminal_search_path(
+            "Specific product search",
+            f"Product name detected: '{intent.product_name}'"
+        )
+
         log_search_step(
             search_log_handle,
             "TIER 1",
@@ -1707,12 +1917,20 @@ def search_product(state: ShoppingState) -> ShoppingState:
             products,
             search_start
         )
+        # Terminal result
+        terminal_search_log(
+            f"      Result : {len(products)}"
+        )
         #############################################
 
         # --- FALLBACK 1: PRODUCT EXISTS, BUT NOT IN THAT COLOR OR SIZE ---
         
         if not products:
             ###################### LOGGING CALL ##################
+            terminal_search_path(
+                "Product fallback",
+                "Strict product search returned 0 → removing color/size restrictions"
+            )
             log_search_step(
                 search_log_handle,
                 "TIER 1 → FALLBACK 1",
@@ -1752,11 +1970,18 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 products,
                 search_start
             )
+            terminal_search_log(
+                f"      Result : {len(products)}"
+            )
             ##################################
             
         # --- FALLBACK 2: SEARCH OTHER PRODUCTS IN THE SAME CATEGORY OR KEYWORD ---
         if not products and (intent.category or intent.keyword):
             ################### AGAIN LOGGING CALL ################
+            terminal_search_path(
+                "Alternative category/keyword search",
+                "Product-name fallback still returned 0 → searching alternatives"
+            )
             log_search_step(
                 search_log_handle,
                 "TIER 1 → FALLBACK 2",
@@ -1847,12 +2072,21 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 products,
                 search_start
             )
+            terminal_search_log(
+                f"      Result : {len(products)}"
+            )
             #####################################################
 
     # TIER 2: GENERAL CATEGORY & ATTRIBUTE FILTERING
     # Used when user asks for general items like: "Show me black hoodies under 1500"
     else:
         ############## LOGGING CALL ####################
+        terminal_search_path_start()
+        terminal_search_path(
+            "Primary category/attribute search",
+            "No specific product name → using extracted category and filters"
+        )
+
         log_search_step(
             search_log_handle,
             "TIER 2",
@@ -1976,6 +2210,9 @@ def search_product(state: ShoppingState) -> ShoppingState:
             products,
             search_start
         )
+        terminal_search_log(
+            f"      Result : {len(products)}"
+        )
         ##############################
 
         # --- FALLBACK 1: STRICT CATEGORY PRESERVATION ---
@@ -1984,6 +2221,13 @@ def search_product(state: ShoppingState) -> ShoppingState:
         if not products and intent.category:
 
             ################ AGAIN LOGGING CALL #############
+            terminal_search_path(
+                "Category fallback",
+                (
+                    f"Primary search returned 0 → keeping category "
+                    f"'{intent.category}' and removing other restrictions"
+                )
+            )
             log_search_step(
                 search_log_handle,
                 "TIER 2 → FALLBACK 1",
@@ -2017,6 +2261,9 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 products,
                 search_start
             )
+            terminal_search_log(
+                f"      Result : {len(products)}"
+            )
             #################################
 
         # --- FALLBACK 2: COLOR MATCH (WHEN NO CATEGORY SPECIFIED) ---
@@ -2024,6 +2271,13 @@ def search_product(state: ShoppingState) -> ShoppingState:
         if not products and intent.color:
 
             ################# AGAIN LOGGING CALL ############
+            terminal_search_path(
+                "Color fallback",
+                (
+                    f"No products from previous search → "
+                    f"searching color '{intent.color}'"
+                )
+            )
             log_search_step(
                 search_log_handle,
                 "TIER 2 → FALLBACK 2",
@@ -2058,11 +2312,22 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 products,
                 search_start
             )
+            terminal_search_log(
+                f"      Result : {len(products)}"
+            )
             #####################################
 
         # --- FALLBACK 3: KEYWORD SEARCH ---
         if not products and intent.keyword:
             ################### AGAIN LOGGING CALL ############
+            terminal_search_path(
+                "Keyword fallback",
+                (
+                    f"No products from previous search → "
+                    f"searching keyword '{clean_kw}'"
+                )
+            )
+
             log_search_step(
                 search_log_handle,
                 "TIER 2 → FALLBACK 3",
@@ -2098,6 +2363,9 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 products,
                 search_start
             )
+            terminal_search_log(
+                f"      Result : {len(products)}"
+            )
             ###################################
 
         # --- FALLBACK 4: MULTI-CATEGORY STORE BALANCER (LAST RESORT ONLY) ---
@@ -2105,6 +2373,14 @@ def search_product(state: ShoppingState) -> ShoppingState:
         if not products:
 
             ################# LOGGING CALL ##############
+            terminal_search_path(
+                "Store-wide fallback",
+                (
+                    "All previous searches returned 0 → "
+                    "balancing products across available categories"
+                )
+            )
+
             log_search_step(
                 search_log_handle,
                 "TIER 2 → FALLBACK 4",
@@ -2132,6 +2408,12 @@ def search_product(state: ShoppingState) -> ShoppingState:
             log_search(
                 f"Investigation: distinct categories = {distinct_categories}",
                 handle=search_log_handle
+            )
+
+            # Human terminal explanation
+            terminal_search_log(
+                f"      Categories available : "
+                f"{len(distinct_categories)}"
             )
             ####################################################
 
@@ -2169,6 +2451,10 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 "Final multi-category balanced result",
                 products,
                 search_start
+            )
+            terminal_search_log(
+                f"      Products collected   : "
+                f"{len(products)}"
             )
             ###########################################
 
@@ -2236,6 +2522,11 @@ def search_product(state: ShoppingState) -> ShoppingState:
             handle=search_log_handle
         )
 
+    # Human-readable terminal sorting
+    terminal_sort_log(
+        sort_pref,
+        len(products)
+    )
     log_product_table(
         products,
         search_log_handle,
@@ -2249,6 +2540,11 @@ def search_product(state: ShoppingState) -> ShoppingState:
     category_to_recommend = intent.category
 
     ################ AGAIN LOGGING CALL ##########
+    # Human-readable
+    terminal_similar_start(
+        category_to_recommend
+    )
+
     log_search(
         "",
         handle=search_log_handle
@@ -2358,6 +2654,15 @@ def search_product(state: ShoppingState) -> ShoppingState:
             similar_products,
             search_start
         )
+        # Human-readable
+        terminal_similar_step(
+            "Primary recommendation search",
+            (
+                "Searching same category while excluding "
+                "already returned products"
+            ),
+            len(similar_products)
+        )
         ############################################
         # Fallback for similar products
         if not similar_products and primary_skus:
@@ -2392,11 +2697,21 @@ def search_product(state: ShoppingState) -> ShoppingState:
                 similar_products,
                 search_start
             )
+            terminal_similar_step(
+                "Similar-product fallback",
+                "Primary recommendation search returned 0 → removing color restriction",
+                len(similar_products)
+            )
     else:
 
         log_search(
             "Investigation: no recommendation category available → similar-product search skipped.",
             handle=search_log_handle
+        )
+        terminal_similar_step(
+            "Similar-product search skipped",
+            "No recommendation category was available",
+            0
         )
     log_product_table(
         similar_products,
@@ -2438,16 +2753,24 @@ def search_product(state: ShoppingState) -> ShoppingState:
         search_start,
         len(products)
     )
+
+    terminal_search_result(
+        products_count=len(products),
+        similar_count=len(similar_products),
+        elapsed_ms=(
+            time.perf_counter() - search_start
+        ) * 1000
+    )
         #####################################     
 
-    print("Extracted Intent:", intent)
-    print("Product Name:", intent.product_name)
-    print("Category:", intent.category)
-    print("Color:", intent.color)
-    print("Size:", intent.size)
-    print("Price Max:", intent.price_max)
-    print(f"Products Found in DB: {len(products)}")
-    print(f"Similar Products Found in DB: {len(similar_products)}")
+    # print("Extracted Intent:", intent)
+    # print("Product Name:", intent.product_name)
+    # print("Category:", intent.category)
+    # print("Color:", intent.color)
+    # print("Size:", intent.size)
+    # print("Price Max:", intent.price_max)
+    # print(f"Products Found in DB: {len(products)}")
+    # print(f"Similar Products Found in DB: {len(similar_products)}")
 
     return {
         "products": products,
@@ -2473,9 +2796,10 @@ def log_generate_response(
     next_bot_action,
     next_focus
 ):
-    print("\n" + "=" * 100)
-    print("GENERATE RESPONSE")
-    print("=" * 100)
+    # print("\n" + "=" * 100)
+    # print("GENERATE RESPONSE")
+    # print("=" * 100)
+    log_header("GENERATE RESPONSE")
 
     print("RESPONSE INPUTS")
     print("-" * 80)
@@ -2796,9 +3120,10 @@ def log_create_checkout_session(
     payment_url=None,
     error=None
 ):
-    print("\n" + "=" * 100)
-    print("CREATE CHECKOUT SESSION")
-    print("=" * 100)
+    # print("\n" + "=" * 100)
+    # print("CREATE CHECKOUT SESSION")
+    # print("=" * 100)
+    log_header("CREATE CHECKOUT SESSION")
 
     print("CHECKOUT INPUT")
     print("-" * 80)
@@ -3156,9 +3481,10 @@ def log_route_after_intent(
     intent_val,
     next_node
 ):
-    print("\n" + "=" * 80)
-    print("ROUTE AFTER INTENT")
-    print("=" * 80)
+    # print("\n" + "=" * 80)
+    # print("ROUTE AFTER INTENT")
+    # print("=" * 80)
+    log_header("ROUTE AFTER INTENT")
 
     print("INPUT")
     print("-" * 80)
@@ -3319,9 +3645,10 @@ def log_route_post_sync_state(route, next_node):
 
     route = getattr(route, "value", route)
 
-    print("\n" + "=" * 80)
-    print("ROUTE POST SYNC")
-    print("=" * 80)
+    # print("\n" + "=" * 80)
+    # print("ROUTE POST SYNC")
+    # print("=" * 80)
+    log_header("ROUTE POST SYNC")
 
     print("\nINPUT")
     print("-" * 80)
@@ -3332,7 +3659,7 @@ def log_route_post_sync_state(route, next_node):
     print("\nFLOW")
     print("-" * 80)
 
-    print(
+    log_flow(
         f"""
         ┌──────────────────────────────────────────────┐
         │ ROUTER                                       │
@@ -3375,9 +3702,10 @@ def log_route_after_intent_state(
         or ""
     ).lower()
 
-    print("\n" + "=" * 80)
-    print("ROUTE AFTER INTENT")
-    print("=" * 80)
+    # print("\n" + "=" * 80)
+    # print("ROUTE AFTER INTENT")
+    # print("=" * 80)
+    log_header("ROUTE AFTER INTENT")
 
     print("\nINPUT")
     print("-" * 80)
@@ -3390,7 +3718,7 @@ def log_route_after_intent_state(
     print("\nFLOW")
     print("-" * 80)
 
-    print(
+    log_flow(
         f"""
         ┌──────────────────────────────────────────────┐
         │ EXTRACT INTENT                               │
