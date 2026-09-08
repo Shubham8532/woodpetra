@@ -9,8 +9,10 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langsmith import traceable
 from backend.config import llm_20B, llm_120B, supabase
 from enum import Enum
+from backend.logger import *
 # from langgraph.checkpoint.serde.types import ERROR_ON_UNHANDLED
 import warnings
+import time
 warnings.filterwarnings("ignore", message=".*Deserializing unregistered type.*")
 
 from backend.models import(
@@ -34,122 +36,194 @@ razorpay_client = razorpay.Client(
 )
 
 
-############# HELPER COLOR for LOGGING #####################
-# terminal colors
-RESET = "\033[0m"
 
-HEADER_COLOR = "\033[96m"       # Cyan
-FLOW_COLOR = "\033[93m"       # Yellow
-
-def log_header(title):
-    print(HEADER_COLOR)
-    print("\n" + "=" * 80)
-    print(title)
-    print("=" * 80 + RESET)
-
-
-def log_flow(text):
-    print(FLOW_COLOR + text + RESET)
-################################################
-
-# def invoke_with_fallback(messages, schema=None):
-#     """
-#     Executes primary 70B model with instant failover to 120B on rate limit or error.
-#     Supports both text generation and structured Pydantic schema extraction.
-#     """
-#     # Bind schema if passed, otherwise use raw LLM
-#     model_70b = llm_70B.with_structured_output(schema) if schema else llm_70B
-#     model_120b = llm_120B.with_structured_output(schema) if schema else llm_120B
-
-#     try:
-#         return model_70b.invoke(messages)
-#     except Exception as e:
-#         print(f"⚠️ Primary 70B error ({e}). Failing over to GPT-OSS 120B...")
-#         return model_120b.invoke(messages)
-
-# def invoke_with_fallback(messages, schema=None):
-#     """
-#     Executes primary 70B model with failover to 120B.
-#     Falls back gracefully to string Pydantic parsing if function calling fails on backup model.
-#     """
-    # if not schema:
-    #     try:
-    #         return llm_70B.invoke(messages)
-    #     except Exception as e:
-    #         print(f"⚠️ Primary 70B error ({e}). Failing over to 120B...")
-    #         return llm_120B.invoke(messages)
-
-    # model_70b = llm_70B.with_structured_output(schema)
-
-    # try:
-    #     return model_70b.invoke(messages)
-    # except Exception as e:
-    #     print(f"⚠️ Primary 70B error ({e}). Failing over to 120B...")
-        
-    #     # Try native structured output on 120B
-    #     try:
-    #         model_120b = llm_120B.with_structured_output(schema)
-    #         return model_120b.invoke(messages)
-    #     except Exception as fallback_err:
-    #         print(f"⚠️ 120B native tool-call failed ({fallback_err}). Retrying with Pydantic parser fallback...")
-            
-    #         parser = PydanticOutputParser(pydantic_object=schema)
-    #         format_instructions = parser.get_format_instructions()
-            
-    #         augmented_messages = list(messages)
-    #         augmented_messages.append((
-    #             "human", 
-    #             f"\n\nIMPORTANT: Return ONLY a raw valid JSON object matching this schema:\n{format_instructions}"
-    #         ))
-            
-    #         raw_response = llm_120B.invoke(augmented_messages)
-            
-    #         # Clean markdown code blocks or literal '"null"' strings
-    #         clean_text = (
-    #             raw_response.content
-    #             .replace("```json", "")
-    #             .replace("```", "")
-    #             .replace('"null"', "null")
-    #             .strip()
-    #         )
-    #         return parser.parse(clean_text)
-    
+@timed_node()
+@timed_node()
 def invoke_with_fallback(messages, parser=None):
     """
     1. Primary: 20B Model (Fast & Cheap)
     2. Fallback: 120B Model (High Resilience Backup)
     """
-    # ── TRY PRIMARY MODEL (20B) ──
+    # ============================================================
+    # TRY PRIMARY MODEL (20B)
+    # ============================================================
+    primary_start = time.perf_counter()
     try:
         raw_res = llm_20B.invoke(messages)
-        content = raw_res.content if hasattr(raw_res, 'content') else str(raw_res)
+        primary_elapsed = time.perf_counter() - primary_start
 
+        usage = getattr(raw_res, "usage_metadata", None)
+        if usage:
+            print(
+                f"[LLM USAGE] 20B | "
+                f"input={usage.get('input_tokens')} | "
+                f"output={usage.get('output_tokens')} | "
+                f"total={usage.get('total_tokens')}"
+            )
+
+        print(
+            FLOW_COLOR
+            + f"[LLM TIMER] 20B | {primary_elapsed:.2f}s | RESPONSE RECEIVED"
+            + RESET
+        )
+
+        content = (
+            raw_res.content
+            if hasattr(raw_res, "content")
+            else str(raw_res)
+        )
+
+        # --------------------------------------------------------
+        # Parse structured output if a parser was provided
+        # --------------------------------------------------------
         if parser:
-            clean = content.replace("```json", "").replace("```", "").strip()
-            return parser.parse(clean)
+            clean = content.strip()
+            # Remove markdown JSON fences if the model added them
+            if clean.startswith("```"):
+                clean = clean.replace("```json", "", 1)
+                clean = clean.replace("```", "", 1)
+                clean = clean.strip()
+
+            # ----------------------------------------------------
+            # Handle accidental text before/after the JSON object
+            # ----------------------------------------------------
+            start = clean.find("{")
+            end = clean.rfind("}")
+
+            if start != -1 and end != -1 and end > start:
+                clean = clean[start:end + 1]
+
+            try:
+                result = parser.parse(clean)
+                print(
+                    FLOW_COLOR
+                    + "[LLM PARSE] 20B | VALID"
+                    + RESET
+                )
+                return result
+
+            except Exception as parse_error:
+                print(
+                    FLOW_COLOR
+                    + "[LLM PARSE] 20B | INVALID → FALLBACK"
+                    + RESET
+                )
+                print(
+                    f"[20B JSON PARSE FAILED]\n"
+                    f"Error: {parse_error}\n"
+                    f"Raw output:\n{content}\n"
+                    f"[END 20B RAW OUTPUT]"
+                )
+                # Re-raise so the outer try/except activates
+                # the 120B fallback.
+                raise
+
         return content
 
     except Exception as e1:
-        print(f"[Primary 20B Failed: {e1}] -> Falling back to 120B...")
+        primary_elapsed = time.perf_counter() - primary_start
+        print(
+            FLOW_COLOR
+            + f"[LLM TIMER] 20B | {primary_elapsed:.2f}s | FAILED: {e1}"
+            + RESET
+        )
+        print(
+            f"[Primary 20B Failed: {e1}] "
+            f"-> Falling back to 120B..."
+        )
 
-    # ── TRY FALLBACK (120B) ──
+    # ============================================================
+    # TRY FALLBACK MODEL (120B)
+    # ============================================================
+    fallback_start = time.perf_counter()
     try:
         raw_res = llm_120B.invoke(messages)
-        content = raw_res.content if hasattr(raw_res, 'content') else str(raw_res)
+        fallback_elapsed = time.perf_counter() - fallback_start
+        usage = getattr(raw_res, "usage_metadata", None)
+        if usage:
+            print(
+                f"[LLM USAGE] 120B | "
+                f"input={usage.get('input_tokens')} | "
+                f"output={usage.get('output_tokens')} | "
+                f"total={usage.get('total_tokens')}"
+            )
 
+        print(
+            FLOW_COLOR
+            + f"[LLM TIMER] 120B | {fallback_elapsed:.2f}s | RESPONSE RECEIVED"
+            + RESET
+        )
+
+        content = (
+            raw_res.content
+            if hasattr(raw_res, "content")
+            else str(raw_res)
+        )
+
+        # --------------------------------------------------------
+        # Parse structured output if a parser was provided
+        # --------------------------------------------------------
         if parser:
-            clean = content.replace("```json", "").replace("```", "").strip()
-            return parser.parse(clean)
+            clean = content.strip()
+            # Remove markdown JSON fences if the model added them
+            if clean.startswith("```"):
+                clean = clean.replace("```json", "", 1)
+                clean = clean.replace("```", "", 1)
+                clean = clean.strip()
+
+            # ----------------------------------------------------
+            # Handle accidental text before/after the JSON object
+            # ----------------------------------------------------
+            start = clean.find("{")
+            end = clean.rfind("}")
+
+            if start != -1 and end != -1 and end > start:
+                clean = clean[start:end + 1]
+
+            try:
+                result = parser.parse(clean)
+                print(
+                    FLOW_COLOR
+                    + "[LLM PARSE] 120B | VALID"
+                    + RESET
+                )
+                return result
+
+            except Exception as parse_error:
+                print(
+                    FLOW_COLOR
+                    + "[LLM PARSE] 120B | INVALID"
+                    + RESET
+                )
+
+                print(
+                    f"[120B JSON PARSE FAILED]\n"
+                    f"Error: {parse_error}\n"
+                    f"Raw output:\n{content}\n"
+                    f"[END 120B RAW OUTPUT]"
+                )
+                raise
+
         return content
 
     except Exception as e2:
-        print(f"[ALL Fallback Models Failed]: {e2}")
+        fallback_elapsed = time.perf_counter() - fallback_start
+        print(
+            FLOW_COLOR
+            + f"[LLM TIMER] 120B | {fallback_elapsed:.2f}s | FAILED: {e2}"
+            + RESET
+        )
+        print(
+            f"[ALL Fallback Models Failed]: {e2}"
+        )
+
         raise e2
 
 
 # har naya question aane par pichle turn ke temporary search data ko clear karna
 # taaki pichle turn ka out-of-stock ya irrelevant topic next turn mein bleed na kare
 @traceable(name="Reset Turn Slots", description="Wipe per-turn ephemeral slots before each new user turn.")
+@timed_node()
 def reset_turn_slots(state: ShoppingState) -> ShoppingState:
     """
     Clears per-turn search filters and product lists before processing 
@@ -184,6 +258,7 @@ _router_parser = PydanticOutputParser(pydantic_object=RouterModel)
 
 
 @traceable(name="Router", description="Route the user query to the appropriate workflow path.")
+@timed_node()
 def router(state: ShoppingState):
     """
                     USER QUERY
@@ -238,61 +313,13 @@ def router(state: ShoppingState):
 
     print(f"[Router] last_bot_action={last_bot_action!r} | route={result.route!r}")
 
-    ######################## Logging for debugging ##############
-
-    def log_router_state(query, last_bot_action, result):
-        route = result.route.value
-
-        # print(ROUTER_COLOR)
-
-        # print("\n" + "=" * 80)
-        # print("ROUTER")
-        # print("=" * 80)
-        log_header("ROUTER")
-
-        print("\nINPUT")
-        print("-" * 80)
-        print(f"| {'Field':<20} | {'Value':<52} |")
-        print(f"|{'-' * 22}|{'-' * 54}|")
-        print(f"| {'query':<20} | {str(query):<52} |")
-        print(f"| {'last_bot_action':<20} | {str(last_bot_action):<52} |")
-
-        print("\nFLOW")
-        print("-" * 80)
-
-        log_flow(
-            f"""
-                ┌──────────────────────────────────────────────┐
-                │ USER QUERY                                   │
-                │ {str(query):<44} │
-                └──────────────────────┬───────────────────────┘
-                                    │
-                                    ▼
-                ┌──────────────────────────────────────────────┐
-                │ ROUTER                                       │
-                │ query + last_bot_action                      │
-                └──────────────────────┬───────────────────────┘
-                                    │
-                                route = {route}
-                                    │
-                                    ▼
-                ┌──────────────────────────────────────────────┐
-                │ {route.upper() + " WORKFLOW":<44} │
-                └──────────────────────────────────────────────┘
-                """
-        )
-
-        print("=" * 80)
-
-        print(RESET)
-
-
+    
+    ############ LOGGING ############
     log_router_state(
         query=query,
         last_bot_action=last_bot_action,
         result=result,
     )
-
     ###########################
 
     return {
@@ -300,6 +327,7 @@ def router(state: ShoppingState):
     }
 
 @traceable(name="Decide Route", description="Decide the next workflow path based on the router's output.")
+@timed_node()
 def decide_route(state: ShoppingState):
     """
     Read the route selected by the router and return it to the graph
@@ -315,63 +343,9 @@ def decide_route(state: ShoppingState):
     return state['route']
 
 
-######################## Logging for debugging (load_history()) ########################
-
-from datetime import datetime
-def log_load_history_state(
-    thread_id,
-    snapshots_found,
-    recent_snapshots,
-    history
-):
-    log_file = "history_ongoing.txt"
-
-    with open(log_file, "a", encoding="utf-8") as f:
-
-        f.write("\n" + "=" * 80 + "\n")
-        f.write("LOAD HISTORY\n")
-        f.write("=" * 80 + "\n")
-
-        f.write(f"\nTIME: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-
-        f.write("\nINPUT\n")
-        f.write("-" * 80 + "\n")
-        f.write(f"| {'Field':<25} | {'Value':<47} |\n")
-        f.write(f"|{'-' * 27}|{'-' * 49}|\n")
-        f.write(f"| {'thread_id':<25} | {str(thread_id):<47} |\n")
-        f.write(f"| {'snapshots_found':<25} | {str(snapshots_found):<47} |\n")
-        f.write(f"| {'snapshots_checked':<25} | {str(len(recent_snapshots)):<47} |\n")
-        f.write(f"| {'history_returned':<25} | {str(len(history)):<47} |\n")
-
-        f.write("\nHISTORY RETURNED\n")
-        f.write("-" * 80 + "\n")
-
-        if not history:
-            f.write("No conversation history found.\n")
-
-        else:
-            for i, values in enumerate(history, 1):
-
-                f.write(f"\nTURN {i}\n")
-                f.write("-" * 80 + "\n")
-
-                f.write("USER:\n")
-                f.write(f"  {values.get('query', '')}\n")
-
-                f.write("\nBOT:\n")
-                f.write(f"  {values.get('response', '')}\n")
-
-                f.write("\nOTHER STATE:\n")
-
-                for key, value in values.items():
-                    if key not in ("query", "response"):
-                        f.write(f"  {key}: {value}\n")
-
-        f.write("\n" + "=" * 80 + "\n")
-
-########################################################################
 
 @traceable(name="Load History", description="Load conversation history from the workflow's state history.")
+@timed_node()
 def load_history(config: RunnableConfig):
     """
     workflow.get_state_history(...)
@@ -397,33 +371,96 @@ def load_history(config: RunnableConfig):
         }
     }
 
-    # print("Original:", config["configurable"].keys())
-    # print("Clean:", clean_config)
+    # # print("Original:", config["configurable"].keys())
+    # # print("Clean:", clean_config)
+
+    # snapshots = list(workflow.get_state_history(clean_config))
+    # # print("Snapshots found:", len(snapshots))
+
+    # # Slice only the most recent 12 snapshots (~3-4 turns) to avoid state duplication
+    # recent_snapshots = snapshots[:30]
+
+    # history = []
+    # seen = set()
+    # for snapshot in recent_snapshots:
+    #     values = snapshot.values
+
+    #     # query + response dono hone chahiye
+    #     # Matlab incomplete state ignore.
+    #     if not values.get("query") or not values.get("response"):
+    #         continue
+
+    #     # duplicate query/response hataata hai
+    #     key = (values["query"], values["response"])
+
+    #     if key in seen:
+    #         continue
+
+    #     seen.add(key)
+    #     history.append(values)
 
     snapshots = list(workflow.get_state_history(clean_config))
-    # print("Snapshots found:", len(snapshots))
+    recent_snapshots = snapshots[:30]
 
-    # Slice only the most recent 12 snapshots (~3-4 turns) to avoid state duplication
-    recent_snapshots = snapshots[:12]
+    # ---------------------------------------------------------
+    # IMPORTANT:
+    # Multiple snapshots can belong to ONE user turn.
+    # We only want the FIRST/latest snapshot of each turn.
+    # "source": "input" identifies the beginning of a new user turn.
+    # ---------------------------------------------------------
 
     history = []
-    seen = set()
-    for snapshot in recent_snapshots:
+    current_turn = None
+
+    for snapshot in snapshots:
         values = snapshot.values
+        metadata = getattr(snapshot, "metadata", {}) or {}
 
-        # query + response dono hone chahiye
-        # Matlab incomplete state ignore.
-        if not values.get("query") or not values.get("response"):
+        query = values.get("query")
+        response = values.get("response")
+
+        if not query:
             continue
 
-        # duplicate query/response hataata hai
-        key = (values["query"], values["response"])
+        # New user turn
+        if metadata.get("source") == "input":
 
-        if key in seen:
-            continue
+            if current_turn is not None:
+                history.append(current_turn)
 
-        seen.add(key)
-        history.append(values)
+            current_turn = values
+
+        # Older checkpoint belonging to the same turn
+        elif current_turn is not None:
+
+            # Only fill the response if the current turn doesn't
+            # already have one.
+            if (
+                query == current_turn.get("query")
+                and not current_turn.get("response")
+                and response
+            ):
+                current_turn = values
+
+    # Add final turn
+    if current_turn is not None:
+        history.append(current_turn)
+
+    # Only keep turns that actually have a response
+    history = [
+        turn
+        for turn in history
+        if turn.get("query") and turn.get("response")
+    ]
+
+    # ---------------------------------------------------------
+    # Latest snapshots are first, so reverse to chronological
+    # order: oldest → newest
+    # ---------------------------------------------------------
+    history.reverse()
+
+    # Keep only the latest few actual conversation turns
+    history = history[-6:]
 
 ##################### Logging Call ##################
     log_load_history_state(
@@ -438,51 +475,10 @@ def load_history(config: RunnableConfig):
     return history
 
 
-##############  LOGGING (general_chat)  ##############
-def log_general_chat_llm_context(
-    query,
-    history,
-    history_text,
-    prompt,
-    system_prompt
-):
-    # print("\n" + "=" * 80)
-    # print("GENERAL CHAT — LLM CONTEXT")
-    # print("=" * 80)
-    log_header("GENERAL CHAT — LLM CONTEXT")
-
-    print("\nCURRENT QUERY")
-    print("-" * 80)
-    print(query)
-
-    print("\nHISTORY RECORDS")
-    print("-" * 80)
-    print(f"Records from load_history : {len(history)}")
-
-    print("\nCOMPACT HISTORY")
-    print("-" * 80)
-    print(history_text if history_text else "No conversation history.")
-
-    # print("\nFINAL HUMAN PROMPT")
-    # print("-" * 80)
-    # print(prompt)
-
-    # print("\nSYSTEM PROMPT")
-    # print("-" * 80)
-    # print(system_prompt)
-
-    print("\nPROMPT SIZE")
-    print("-" * 80)
-    print(f"History characters : {len(history_text)}")
-    print(f"Human prompt chars : {len(prompt)}")
-    print(f"System prompt chars: {len(system_prompt)}")
-
-    print("=" * 80)
-
-###########################
 
 # later update
 @traceable(name="General Chat", description="Handle general chat queries using conversation history.")
+@timed_node()
 def general_chat(state: ShoppingState, config: RunnableConfig):
 
     history = load_history(config)
@@ -611,95 +607,123 @@ Current User Query:
     }
 
 
-############# LOGGING (build_conversation) ########################
-def log_build_conversation_state(
-    history,
-    max_turns,
-    history_text,
-    active_category
-):
-    # print("\n" + "=" * 80)
-    # print("BUILD CONVERSATION")
-    # print("=" * 80)
-    log_header("BUILD CONVERSATION")
-
-    print("\nINPUT")
-    print("-" * 80)
-    print(f"History records received : {len(history)}")
-    print(f"Max turns                : {max_turns}")
-
-    print("\nOUTPUT")
-    print("-" * 80)
-    print(f"Active category: {active_category}")
-
-    print("\nHISTORY TEXT GIVEN TO LLM")
-    print("-" * 80)
-
-    if history_text:
-        print(history_text)
-    else:
-        print("No conversation history.")
-
-    print("=" * 80)
-
-########################################
 
 @traceable(name="Build Conversation", description="Convert LangGraph checkpoints into a clean conversation history.")
-def build_conversation(history, max_turns=3):
+@timed_node()
+def build_conversation(history, max_turns=8):
     """
-    Converts recent LangGraph checkpoints into a clean conversation history
-    and extracts the active category from previous turns.
+    Converts recent conversation turns into structured context for intent extraction.
+
+    The LLM receives:
+    - User query
+    - Assistant response
+    - turn_slots captured for that turn
+
+    This prevents important context such as product/category/color/size
+    from being lost when building the history prompt.
     """
 
     conversation = []
     seen_queries = set()
     active_category = None
 
-    # Iterate through history to find queries and the last active category
-    for item in history:   # Newest -> Oldest
-        query = item['query']
+    for item in reversed(history):
+        turn_slots = item.get("turn_slots") or {}
+        category = turn_slots.get("category")
 
-        # Capture the most recent non-null category from past state checkpointers
-        past_intent = item.get('intent')
-        if not active_category and past_intent and getattr(past_intent, 'category', None):
-            active_category = past_intent.category
+        if category:
+            active_category = category
+            break
+
+        # Backward compatibility with older checkpoints.
+        past_intent = item.get("intent")
+        if past_intent:
+            category = getattr(past_intent, "category", None)
+            if category:
+                active_category = category
+                break
+
+    # Build history in chronological order.
+    for item in history:
+        query = item.get("query")
 
         if not query or query in seen_queries:
             continue
+
         seen_queries.add(query)
 
-        raw_response = item.get('response', '')
-        
-        # Clean out UI kachra text before sending to history prompt
+        turn_slots = item.get("turn_slots") or {}
+
+        product_name = turn_slots.get("product_name")
+        category = turn_slots.get("category")
+        keyword = turn_slots.get("keyword")
+        color = turn_slots.get("color")
+        size = turn_slots.get("size")
+        price_min = turn_slots.get("price_min")
+        price_max = turn_slots.get("price_max")
+        material = turn_slots.get("material")
+        fit = turn_slots.get("fit")
+        brands = turn_slots.get("brands")
+        gender = turn_slots.get("gender")
+        sort = turn_slots.get("sort")
+        occasion = turn_slots.get("occasion")
+
+        raw_response = item.get("response", "")
+
         clean_response = (
-            raw_response.split("Matching Items")[0]
+            raw_response
+            .split("Matching Items")[0]
             .split("Tap below")[0]
             .replace("\n", " ")
             .strip()
         )
-        
-        # Truncate response to 120 chars to keep context light & crisp
-        short_response = (clean_response[:120] + "...") if len(clean_response) > 120 else clean_response
+
+        short_response = (
+            clean_response[:120] + "..."
+            if len(clean_response) > 120
+            else clean_response
+        )
 
         conversation.append(
+            f"Previous Turn Context:\n"
+            f"  Product: {product_name}\n"
+            f"  Category: {category}\n"
+            f"  Keyword: {keyword}\n"
+            f"  Color: {color}\n"
+            f"  Material: {material}\n"
+            f"  Size: {size}\n"
+            f"  Fit: {fit}\n"
+            f"  Brands: {brands}\n"
+            f"  Gender: {gender}\n"
+            f"  Price min: {price_min}\n"
+            f"  Price max: {price_max}\n"
+            f"  Sort: {sort}\n"
+            f"  Occasion: {occasion}\n"
             f"User: {query}\n"
             f"Assistant: {short_response}"
         )
 
-    # Limit strictly to the last `max_turns`
-    conversation = conversation[:max_turns]
-    conversation.reverse()  # Reverse to get Oldest -> Newest
+    # Keep newest N turns.
+    conversation = conversation[-max_turns:]
+
+    # LLM sees newest first.
+    conversation.reverse()
 
     history_text = "\n\n".join(conversation)
 
-    ############# LOGGING CALL ##############
     log_build_conversation_state(
         history=history,
         max_turns=max_turns,
         history_text=history_text,
-        active_category=active_category
+        active_category=active_category,
     )
-    ##################
+
+    log_build_conversation_raw(
+        history=history,
+        conversation=conversation,
+        history_text=history_text,
+    )
+
     return history_text, active_category
 
 
@@ -711,6 +735,7 @@ intent_parser = PydanticOutputParser(pydantic_object=ShoppingIntentModel)
 
 #==========================================
 @traceable(name="Extract Intent", description="Extract shopping intent from the user's query using the ShoppingIntentModel.")
+@timed_node()
 def extract_intent(
         state: ShoppingState,
         config: RunnableConfig
@@ -723,79 +748,66 @@ def extract_intent(
     # Increased max_turns to 8 so product context survives 3-4 intervening queries
     history_text, active_category = build_conversation(history, max_turns=8)
 
-    query = state['query']
+#     ################ TEMP LOGGING ################
+#     print("\n[DEBUG] PREVIOUS HISTORY RECORD")
+#     print("history[0] =", history[0] if history else None)
+#     print("history[0] keys =", list(history[0].keys()) if history else None)
+# #############################
 
+    query = state['query']
+    # ################### TEMP LOGGING #################
+    # print("\n[DEBUG] EXTRACT_INTENT STATE")
+    # print("turn_slots at start:", state.get("turn_slots"))
+    # ####################################
     # Can comment out for 70 model
     # structured_output = llm.with_structured_output(ShoppingIntentModel)
 
+    ################### TEMPORARY DEBUGGING #####################
+#     system_prompt = INTENT_PROMPT + f"""
+# Active Category: {active_category if active_category else "None"}
+# History (Last 8 turns):
+# {history_text}
+    
+#     system_prompt = INTENT_PROMPT + f"""
+# ### CURRENT CONTEXT
+# Active Category: {active_category or "None"}
+
+# Previous History:
+# {history_text}
+
+# ### CONTEXT PRIORITY
+# 1. Current user query has highest priority.
+# 2. Active Category persists when no new category is explicitly mentioned.
+# 3. Previous History provides product/reference context for follow-ups.
+# 4. Current-turn color, size, price, and keyword override previous values and otherwise remain null.
+# 5. Do not use an older category when Active Category is available.
+# """
+
     system_prompt = INTENT_PROMPT + f"""
 Active Category: {active_category if active_category else "None"}
+
 History (Last 8 turns):
 {history_text}
-
-MAPPING & INFERENCE:
-- Typos/Slang: "hoofie/sweatshirt" -> Hoodie | "shrt/formal shirt" -> Shirt | "tshirt/tee" -> T-Shirt | "pant/trouser/slacks" -> Trouser | "jean/denim" -> Jeans.
-- Relatives (Hindi/Hinglish/English):
-  * Older male (father/papa/uncle/chacha): Set category="Shirt"/"Trouser", gender="Men".
-  * Younger male (brother/bhai/friend): Set category="T-Shirt"/"Hoodie"/"Joggers", gender="Men".
-  * Female (mother/mummy/sister/behan/wife): For traditional/women wear (saree/kurti/dress), set category=None. For general gifts, set gender="Women", category=None (or infer unisex Hoodie/Cap).
-- Occasion/Vibe: Map style terms ("office", "gym", "party") to logical categories ("Shirt"/"Trouser" for formal, "T-Shirt"/"Hoodie" for casual) and store term in `keyword`. Prioritize category inference over null.
-
-CONTEXT & ATTRIBUTES:
-1. Attribute queries ("Sizes?", "Colors?", "Price?", "Options?") MUST be intent='search'.
-2. CATEGORY PERSISTENCE: Maintain previous category ({active_category}) if no new catalog category is explicitly mentioned in current query.
-3. Greetings ("Hi", "Hello") with active category ({active_category}) MUST set intent='search' and category='{active_category}'.
-4. General queries ("which colors available", "show more") MUST NOT set `product_name`.
-5. Reset `price_max` to null unless budget is explicitly requested in current message.
-6. Requests for "other products", "different categories", or "what else do u have" MUST set category=None.
-7. Infer `product_name` from history when query refers to "it", "this", "that", "the product", or buying expressions ("buy it", "khareedna hai").
-8. SINGLE-TURN FILTERS: `color`, `size`, `price_min`, `price_max`, and `keyword` are strictly single-turn filters. NEVER carry them over from previous turns unless explicitly stated in current message.
-9. ATTRIBUTE INQUIRIES: When the query asks about available colors, sizes, or options for active category ({active_category}), set `color=None`, `size=None`, `price_min=None`, and `price_max=None` while maintaining `category='{active_category}'`.
 """
-    # print("=" * 80)
-    # print("SYSTEM PROMPT")
-    # print(system_prompt)
-    # print("=" * 80)
-
-    # print("USER QUERY")
-    # print(query)
-    # print("=" * 80)
-
-    # ### for trying 7B model(faster response)
-    # # Step 1: FAST 8B MODEL (with PydanticOutputParser + String Null Cleaning)
-    # try:
-    #     format_instructions = intent_parser.get_format_instructions()
-    #     parser_system_prompt = f"{system_prompt}\n\n{format_instructions}"
-
-    #     raw_response = llm_fast.invoke(
-    #         [
-    #             ("system", parser_system_prompt),
-    #             ("human", query)
-    #         ]
-    #     )
-    #     # Sanitize literal string '"null"' artifacts emitted by 8B model into proper JSON null
-    #     clean_content = raw_response.content.replace('"null"', "null")
-    #     result = intent_parser.parse(clean_content)
-    #     return {"intent": result}
-
-    # except Exception as e:
-    #     print(f"[8B Model Failed -> Cascading to 70B Model]: {e}")
-
-
-
-    # STEP 2: STRONG 70B MODEL (Fallback with Native Structured Output)
-    # structured_output = llm_strong.with_structured_output(ShoppingIntentModel)
-
-    # result = structured_output.invoke(
-    #     [
-    #         ("system", system_prompt),
-    #         ("human", query)
-    #     ]
-    # )
+    
+    ############## TEMPORARY TOKENS DEBUGGING #####################
+    print(
+        f"[INTENT PROMPT SIZE] "
+        f"base={len(INTENT_PROMPT)} chars | "
+        f"history={len(history_text)} chars | "
+        f"dynamic={len(system_prompt) - len(INTENT_PROMPT)} chars"
+    )
+    ##############
     format_instructions = intent_parser.get_format_instructions()
     system_with_schema = (
         system_prompt + f"\n\nOUTPUT FORMAT:\nReturn ONLY a raw JSON object matching the schema below (no markdown, no backticks).\n{format_instructions}"
     )
+    #################### TEMPORARY TOKENS DEBBUGGING #####################
+    print(
+        f"[INTENT FINAL PROMPT SIZE] "
+        f"{len(system_with_schema)} chars"
+    )
+    ####################
 
     
     try:
@@ -810,18 +822,12 @@ CONTEXT & ATTRIBUTES:
         print(f"[extract_intent Error] All fallback models failed ({e}) -> Using default neutral intent.")
         result = ShoppingIntentModel(intent=IntentType.GENERAL)
 
-    # # Smart Fallback: Iff no category or produvt_name was matched, assign raw query to keyword
-    # if not result.category and not result.product_name and result.intent in ["search", "recommend"]:
-    #     clean_kw = query.lower().replace("show me", "").replace("do you have", "").strip()
-    #     result.keyword = clean_kw
-
-    # Reset stale single-turn filters on attribute inquiry queries
-    # raw_query = query.lower()
-    # if any(w in raw_query for w in ["color", "colour", "size", "rang", "available", "options"]):
-    #     result.color = None
-    #     result.size = None
-    #     result.price_max = None
-    #     result.price_min = None
+    # Deterministically preserve active category when the current
+# query does not explicitly introduce another category.
+    # if not result.category and active_category:
+    #     result.category = active_category
+    if not result.category and active_category and not result.occasion:
+        result.category = active_category
 
     # Directly map clean intent to ephemeral turn_slots (Zero Manual Pronoun Filtering)
     turn_slots_dict = {
@@ -829,148 +835,36 @@ CONTEXT & ATTRIBUTES:
         "category": result.category,
         "keyword": result.keyword,
         "color": result.color,
+        "material": result.material,
         "size": result.size.value if result.size else None,
+        "fit": result.fit,
+        "brands": result.brands,
+        "gender": result.gender.value if result.gender else None,
         "price_min": result.price_min,
         "price_max": result.price_max,
+        "sort": result.sort.value if result.sort else None,
+        "occasion": result.occasion,
     }
 
 
-        ######################## Logging for debugging ##############
 
-    def log_intent_state(
-        query,
-        active_category,
-        result,
-        turn_slots_dict,
-        previous_turn_slots
-    ):
-        # print("\n" + "=" * 80)
-        # print("EXTRACT INTENT")
-        # print("=" * 80)
-        log_header("EXTRACT INTENT")
+    # Previous turn's slots come from conversation history,
+    # not from state["turn_slots"] because reset_turn_slots() already cleared it.
+    # previous_turn_slots = {}
 
-        # ======================== INPUT ========================
+    # if history:
+    #     previous_turn_slots = history[0].get("turn_slots") or {}
+    previous_turn_slots = {}
 
-        print("\nINPUT")
-        print("-" * 80)
-        print(f"| {'Field':<20} | {'Value':<52} |")
-        print(f"|{'-' * 22}|{'-' * 54}|")
+    if history:
+        previous_turn_slots = history[-1].get("turn_slots") or {}
 
-        print(f"| {'query':<20} | {str(query):<52} |")
-        print(f"| {'active_category':<20} | {str(active_category):<52} |")
-
-        # ======================== OUTPUT ========================
-
-        print("\nSHOPPING INTENT")
-        print("-" * 80)
-
-        fields = [
-            "intent",
-            "keyword",
-            "category",
-            "product_name",
-            "color",
-            "material",
-            "size",
-            "fit",
-            "brands",
-            "gender",
-            "price_min",
-            "price_max",
-            "sort",
-            "occasion",
-        ]
-
-        turn_slot_fields = {
-            "product_name",
-            "category",
-            "keyword",
-            "color",
-            "size",
-            "price_min",
-            "price_max",
-        }
-
-        # First extraction:
-        # Only show what ShoppingIntentModel produced.
-        if previous_turn_slots is None:
-
-            print(
-                f"| {'Field':<20} | "
-                f"{'ShoppingIntentModel':<52} |"
-            )
-            print(
-                f"|{'-' * 22}|"
-                f"{'-' * 54}|"
-            )
-
-            for field in fields:
-
-                value = getattr(result, field)
-
-                if isinstance(value, Enum):
-                    value = value.value
-
-                print(
-                    f"| {field:<20} | "
-                    f"{str(value):<52} |"
-                )
-
-        # Later extraction:
-        # Show model output + what state had before + new turn_slots.
-        else:
-
-            print(
-                f"| {'Field':<20} | "
-                f"{'ShoppingIntentModel':<25} | "
-                f"{'Previous':<20} | "
-                f"{'Current turn_slots':<20} |"
-            )
-
-            print(
-                f"|{'-' * 22}|"
-                f"{'-' * 27}|"
-                f"{'-' * 22}|"
-                f"{'-' * 22}|"
-            )
-
-            for field in fields:
-
-                model_value = getattr(result, field)
-
-                if isinstance(model_value, Enum):
-                    model_value = model_value.value
-
-                if field in turn_slot_fields:
-                    previous_value = previous_turn_slots.get(field)
-                    current_value = turn_slots_dict.get(field)
-                else:
-                    previous_value = "—"
-                    current_value = "—"
-
-                print(
-                    f"| {field:<20} | "
-                    f"{str(model_value):<25} | "
-                    f"{str(previous_value):<20} | "
-                    f"{str(current_value):<20} |"
-                )
-
-        # ======================== STATE OUT ========================
-
-        print("\nSTATE OUT")
-        print("-" * 80)
-        print("| intent      → ShoppingIntentModel")
-        print("| turn_slots  → turn_slots_dict")
-        print("=" * 80)
-
-
-    # Logger only READS the existing state.
     log_intent_state(
         query=query,
         active_category=active_category,
         result=result,
         turn_slots_dict=turn_slots_dict,
-        previous_turn_slots=state.get("turn_slots"),
+        previous_turn_slots=previous_turn_slots,
     )
     ###########################
 
@@ -979,73 +873,11 @@ CONTEXT & ATTRIBUTES:
         "turn_slots": turn_slots_dict,
     }
 
-######### Debugging: Context Decision Logging ########
 
-def log_context_decision_state(intent, context_route):
-
-    route = context_route.value
-
-    if route == "search":
-        next_branch = "EXTRACT INTENT"
-    else:
-        next_branch = "CONTEXT BRANCH"
-
-    # print("\n" + "=" * 80)
-    # print("CONTEXT DECISION")
-    # print("=" * 80)
-    log_header("CONTEXT DECISION")
-
-    print("\nINPUT")
-    print("-" * 80)
-    print(f"| {'Field':<20} | {'Value':<52} |")
-    print(f"|{'-' * 22}|{'-' * 54}|")
-    print(f"| {'intent':<20} | {str(intent):<52} |")
-
-    print("\nFLOW")
-    print("-" * 80)
-
-    log_flow(
-        f"""
-        ┌──────────────────────────────────────────────┐
-        │ SHOPPING WORKFLOW                            │
-        └──────────────────────┬───────────────────────┘
-                               │
-                               ▼
-        ┌──────────────────────────────────────────────┐
-        │ CONTEXT DECISION                             │
-        │                                              │
-        │ intent = {str(intent):<32} │
-        └──────────────────────┬───────────────────────┘
-                               │
-                               ▼
-        ┌──────────────────────────────────────────────┐
-        │ CONTEXT ROUTE                                │
-        │                                              │
-        │ route = {route:<35} │
-        ⚠️ CURRENT ARCHITECTURE — context_route may be invalid
-        └──────────────────────┬───────────────────────┘
-                               │
-                               ▼
-        ┌──────────────────────────────────────────────┐
-        │ NEXT STEP                                    │
-        │                                              │
-        │ {next_branch:<44} │
-        └──────────────────────────────────────────────┘
-        """
-    )
-
-    print("\nOUTPUT")
-    print("-" * 80)
-    print(f"| {'Field':<20} | {'Value':<52} |")
-    print(f"|{'-' * 22}|{'-' * 54}|")
-    print(f"| {'context_route':<20} | {route:<52} |")
-
-    print("=" * 80)
-
-##############################
 
 
 @traceable(name="Context Decision", description="Decide whether to search the database or answer using conversation context.")
+@timed_node()
 def context_decision(state: ShoppingState):
     """
     DEcide whether o seacrh the database or answer using conversation context
@@ -1136,6 +968,7 @@ def context_decision(state: ShoppingState):
 
 
 @traceable(name="Decide Context", description="Decide the next workflow path based on the context decision's output.")
+@timed_node()
 def decide_context(state: ShoppingState):
     """
     context_decision
@@ -1165,387 +998,10 @@ def decide_context(state: ShoppingState):
     return state['context_route']
 
 
-########################## LOGGING (search_product) ##########################
 
-import time
-from datetime import datetime
-from pathlib import Path
-
-
-RETRIEVED_PRODUCTS_LOG = Path("retrieved_products.txt")
-
-
-def log_search(message="", *, handle=None):
-    """
-    Write one log message to retrieved_products.txt.
-
-    Logging must NEVER affect search_product().
-    Any logging-related error is silently ignored.
-    """
-
-    try:
-
-        if handle is not None:
-            handle.write(message + "\n")
-            handle.flush()
-            return
-
-        with RETRIEVED_PRODUCTS_LOG.open("a", encoding="utf-8") as f:
-            f.write(message + "\n")
-
-    except Exception:
-        pass
-
-
-def _log_timestamp():
-    try:
-        return datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    except Exception:
-        return "UNKNOWN-TIME"
-
-
-def _log_elapsed(start_time):
-    try:
-        return f"{(time.perf_counter() - start_time) * 1000:.1f} ms"
-    except Exception:
-        return "UNKNOWN"
-
-
-def log_search_step(
-    handle,
-    step,
-    description,
-    start_time,
-    result_count=None
-):
-    """
-    Log one investigation step.
-
-    Logging failures are ignored so the actual search logic
-    can never be affected.
-    """
-
-    try:
-
-        elapsed = _log_elapsed(start_time)
-
-        if result_count is None:
-
-            log_search(
-                f"[{_log_timestamp()}] {step} | "
-                f"{description} | "
-                f"elapsed={elapsed}",
-                handle=handle
-            )
-
-        else:
-
-            log_search(
-                f"[{_log_timestamp()}] {step} | "
-                f"{description} | "
-                f"results={result_count} | "
-                f"elapsed={elapsed}",
-                handle=handle
-            )
-
-    except Exception:
-        pass
-
-
-def log_product_table(
-    products,
-    handle,
-    title,
-    limit=None
-):
-    """
-    Write retrieved products in a compact table.
-
-    Does NOT dump the complete product JSON.
-    """
-
-    try:
-
-        log_search("", handle=handle)
-        log_search(title, handle=handle)
-        log_search("-" * 100, handle=handle)
-
-        if not products:
-
-            log_search(
-                "Count: 0",
-                handle=handle
-            )
-
-            return
-
-        log_search(
-            f"Count: {len(products)}",
-            handle=handle
-        )
-
-        rows = products if limit is None else products[:limit]
-
-        log_search(
-            f"{'SKU':<14}"
-            f"{'NAME':<30}"
-            f"{'CATEGORY':<16}"
-            f"{'COLOR':<14}"
-            f"{'SIZE':<8}"
-            f"{'PRICE':>10}",
-            handle=handle
-        )
-
-        log_search("-" * 92, handle=handle)
-
-        for product in rows:
-
-            sku = str(
-                product.get("sku", "")
-            )[:13]
-
-            name = str(
-                product.get("name", "")
-            )[:29]
-
-            category = str(
-                product.get("category", "")
-            )[:15]
-
-            color = str(
-                product.get("color", "")
-            )[:13]
-
-            size = str(
-                product.get("size", "")
-            )[:7]
-
-            price = str(
-                product.get("price", "")
-            )
-
-            log_search(
-                f"{sku:<14}"
-                f"{name:<30}"
-                f"{category:<16}"
-                f"{color:<14}"
-                f"{size:<8}"
-                f"{price:>10}",
-                handle=handle
-            )
-
-        if limit is not None and len(products) > limit:
-
-            log_search(
-                f"... {len(products) - limit} more products "
-                f"not displayed",
-                handle=handle
-            )
-
-    except Exception:
-        pass
-
-
-def log_search_query(
-    handle,
-    step,
-    query_description,
-    products,
-    start_time
-):
-    """
-    Convenience logger for a database query.
-    """
-
-    try:
-
-        log_search_step(
-            handle,
-            step,
-            query_description,
-            start_time,
-            len(products)
-        )
-
-        log_product_table(
-            products,
-            handle,
-            f"{step} RESULTS",
-            limit=20
-        )
-
-    except Exception:
-        pass
-
-# ============================================================
-# HUMAN-READABLE TERMINAL LOGGER
-# ============================================================
-
-def terminal_search_log(message=""):
-    """
-    Human-readable terminal logging only.
-
-    This is intentionally separate from developer logging
-    written to retrieved_products.txt.
-    """
-    try:
-        print(message)
-    except Exception:
-        pass
-
-def terminal_search_header(query):
-    try:
-        print()
-        # print("═" * 80)
-        # print("SEARCH PRODUCT")
-        # print("═" * 80)
-        log_header("SEARCH PRODUCT")
-
-        print(f"Query : {query}")
-
-    except Exception:
-        pass
-
-
-def terminal_search_intent(intent):
-    try:
-        intent_type = getattr(intent, "intent", None)
-        category = getattr(intent, "category", None)
-
-        filters = []
-
-        if getattr(intent, "product_name", None):
-            filters.append(f"product={intent.product_name}")
-
-        if getattr(intent, "keyword", None):
-            filters.append(f"keyword={intent.keyword}")
-
-        if getattr(intent, "color", None):
-            filters.append(f"color={intent.color}")
-
-        if getattr(intent, "size", None):
-            size = (
-                intent.size.value
-                if hasattr(intent.size, "value")
-                else intent.size
-            )
-            filters.append(f"size={size}")
-
-        if getattr(intent, "price_min", None) is not None:
-            filters.append(f"min=₹{intent.price_min}")
-
-        if getattr(intent, "price_max", None) is not None:
-            filters.append(f"max=₹{intent.price_max}")
-
-        print()
-        print("INTENT")
-        print(f"  Type     : {intent_type}")
-        print(f"  Category : {category}")
-        print(
-            f"  Filters  : "
-            f"{', '.join(filters) if filters else 'none'}"
-        )
-
-    except Exception:
-        pass
-
-
-def terminal_search_path_start():
-    try:
-        print()
-        print("SEARCH PATH")
-    except Exception:
-        pass
-
-
-def terminal_search_path(
-    name,
-    why,
-    result_count=None,
-    extra=None
-):
-    try:
-        print()
-        print(f"  → {name}")
-        print(f"      Why    : {why}")
-
-        if extra:
-            print(f"      Detail : {extra}")
-
-        if result_count is not None:
-            print(f"      Result : {result_count}")
-
-    except Exception:
-        pass
-
-
-def terminal_sort_log(sort_pref, products_count):
-    try:
-        print()
-        print("SORT")
-
-        if not products_count:
-            print("  → No products available for sorting")
-            return
-
-        sort_val = str(sort_pref if sort_pref else "").lower()
-
-        if "price_desc" in sort_val or "desc" in sort_val:
-            print("  → Price descending")
-        else:
-            print("  → Price ascending (default)")
-
-    except Exception:
-        pass
-
-
-def terminal_similar_start(category):
-    try:
-        print()
-        print("SIMILAR PRODUCTS")
-
-        if category:
-            print(f"  Category : {category}")
-        else:
-            print("  Category : none")
-
-    except Exception:
-        pass
-
-
-def terminal_similar_step(name, why, result_count):
-    try:
-        print(f"  → {name}")
-        print(f"      Why    : {why}")
-        print(f"      Result : {result_count}")
-    except Exception:
-        pass
-
-
-def terminal_search_result(
-    products_count,
-    similar_count,
-    elapsed_ms
-):
-    try:
-        print()
-        print("RESULT")
-        print(f"  Products returned : {products_count}")
-        print(f"  Similar products  : {similar_count}")
-
-        print()
-        print(
-            f"✓ SEARCH COMPLETE | "
-            f"{elapsed_ms:.1f} ms"
-        )
-
-        print("═" * 80)
-
-    except Exception:
-        pass
-#######################################################
 
 @traceable(name="Search Product", description="Query Supabase using the extracted shopping intent with a 2-Tier strategy and smart fallbacks.")
+@timed_node()
 def search_product(state: ShoppingState) -> ShoppingState:
     """
     Query Supabase using the extracted shopping intent.
@@ -1702,9 +1158,13 @@ def search_product(state: ShoppingState) -> ShoppingState:
         intent.keyword,
         intent.color,
         intent.size,
+        intent.material,
+        intent.fit,
+        getattr(intent, 'brands', None),
+        getattr(intent, 'gender', None),
         intent.price_min is not None,
         intent.price_max is not None,
-        getattr(intent, 'brands', None) or getattr(intent, 'brand', None)
+        getattr(intent, 'occasion', None),
     ]) or getattr(intent, 'intent', None) in ["search", "browse", "recommend", "general"]
 
 
@@ -1789,6 +1249,50 @@ def search_product(state: ShoppingState) -> ShoppingState:
         return {"products": [] , "similar_products": []}
     
     products = []
+
+    matched_categories = []
+
+    if getattr(intent, "occasion", None):
+        terminal_search_log(
+            f"  → OCCASION DETECTED: '{intent.occasion}' | "
+            f"category={intent.category} | "
+            f"gender={getattr(intent, 'gender', None)}"
+        )
+
+        # Find catalog categories whose descriptions support the occasion.
+        occasion = intent.occasion.lower().strip()
+
+        try:
+            catalog_rows = (
+                supabase
+                .table("products")
+                .select("category,description")
+                .execute()
+                .data
+                or []
+            )
+
+            seen_categories = set()
+
+            for row in catalog_rows:
+                category = row.get("category")
+                description = (row.get("description") or "").lower()
+
+                if category and occasion in description:
+                    if category not in seen_categories:
+                        matched_categories.append(category)
+                        seen_categories.add(category)
+
+            terminal_search_log(
+                f"      Catalog occasion matches : "
+                f"{matched_categories if matched_categories else 'none'}"
+            )
+
+        except Exception as e:
+            terminal_search_log(
+                f"CATALOG OCCASION LOOKUP FAILED | {e}",
+                handle=search_log_handle
+            )
 
     ######################### AGAIN LOGGING CALL ###############
     log_search(
@@ -2778,72 +2282,11 @@ def search_product(state: ShoppingState) -> ShoppingState:
     }
 
 
-##################### LOGGING --> generate_response ####################
-def log_generate_response(
-    state,
-    products,
-    similar_products,
-    intent_str,
-    route_val,
-    is_general,
-    payment_url,
-    sort_val,
-    eval_products,
-    selected_product,
-    api_displayed_products,
-    api_similar_products,
-    response_text,
-    next_bot_action,
-    next_focus
-):
-    # print("\n" + "=" * 100)
-    # print("GENERATE RESPONSE")
-    # print("=" * 100)
-    log_header("GENERATE RESPONSE")
 
-    print("RESPONSE INPUTS")
-    print("-" * 80)
-    print(f"Query                  : {state.get('query')}")
-    print(f"Intent                 : {intent_str}")
-    print(f"Route                  : {route_val or 'None'}")
-    print(f"General request        : {is_general}")
-    print(f"Products received      : {len(products)}")
-    print(f"Similar products       : {len(similar_products)}")
-    print(f"Sorting                : {sort_val or 'None'}")
-    print(f"Payment URL            : {'Yes' if payment_url else 'No'}")
-    print(f"Selected product       : {selected_product.get('name') if selected_product else 'None'}")
-    print(f"Evaluation products    : {len(eval_products)}")
 
-    print("\nRESPONSE DECISION")
-    print("-" * 80)
-
-    if is_general:
-        print("Context                : General / non-shopping")
-    else:
-        print("Context                : Shopping")
-
-    if payment_url:
-        print("Response branch        : Checkout")
-    else:
-        print("Response branch        : LLM response")
-
-    print(f"Products displayed     : {len(api_displayed_products)}")
-    print(f"Similar displayed      : {len(api_similar_products)}")
-
-    print("\nRESPONSE OUTPUT")
-    print("-" * 80)
-    print(f"Response length        : {len(response_text)} characters")
-    print(f"Next bot action        : {next_bot_action}")
-    print(
-        f"Active focus product   : "
-        f"{next_focus.get('name') if next_focus else 'None'}"
-    )
-
-    print("\nGENERATE RESPONSE COMPLETE")
-    print("=" * 100)
-##########################
 
 @traceable(name="Generate Response", description="Convert structured product data into a natural language reply.")
+@timed_node()
 def generate_response(state: ShoppingState) -> ShoppingState:
     """Convert structured product data into a natural language reply."""
 
@@ -2887,7 +2330,13 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     else:
         eval_products = products[:5]
 
-    selected_product = state.get("selected_product") or (products[0] if products else None)
+    ############### TEMPORARY  DEBUG LOGGING ###############
+    # Current search results are authoritative for this turn.
+    # Do not reuse an old selected product when the current query
+    # produced a new set of products.
+    selected_product = products[0] if products else None
+    # selected_product = state.get("selected_product") or (products[0] if products else None)
+    #############################################################
 
     # 4. CHECKOUT RESPONSE BRANCH
     if intent_str == "checkout" and payment_url:
@@ -2976,17 +2425,38 @@ INSTRUCTIONS:
     else:
         next_bot_action = state.get("last_bot_action")
 
+    ##################### TEMPORARY DEBUG LOGGING #####################
     next_focus = state.get("active_focus_product")
+
     if products and intent_str not in ("general", "greeting", "out_of_scope"):
         intent_product_name = getattr(raw_intent, "product_name", None)
+
         if intent_product_name:
             named_match = next(
-                (p for p in products if intent_product_name.lower() in p.get("name", "").lower()),
+                (
+                    p for p in products
+                    if intent_product_name.lower() in p.get("name", "").lower()
+                ),
                 None
             )
             next_focus = named_match if named_match else products[0]
+
         else:
-            next_focus = state.get("active_focus_product") or products[0]
+            # No explicit product name means this is a fresh/current
+            # product search. Focus on the current result, not an old one.
+            next_focus = products[0]
+    # next_focus = state.get("active_focus_product")
+    # if products and intent_str not in ("general", "greeting", "out_of_scope"):
+    #     intent_product_name = getattr(raw_intent, "product_name", None)
+    #     if intent_product_name:
+    #         named_match = next(
+    #             (p for p in products if intent_product_name.lower() in p.get("name", "").lower()),
+    #             None
+    #         )
+    #         next_focus = named_match if named_match else products[0]
+    #     else:
+    #         next_focus = state.get("active_focus_product") or products[0]
+    ########################################################
 
     ############ LOGGING CALL ############
     log_generate_response(
@@ -3020,44 +2490,8 @@ INSTRUCTIONS:
     }
 
 
-##################### LOGGING --> get_table_primary_key #####################
-def log_get_table_primary_key(
-    table_name,
-    schema_url,
-    status_code,
-    definitions_found,
-    table_found,
-    primary_key_found,
-    result,
-    error=None
-):
-    print("\n" + "=" * 80)
-    print("GET TABLE PRIMARY KEY")
-    print("=" * 80)
 
-    print("INPUT")
-    print("-" * 80)
-    print(f"Table name             : {table_name}")
-
-    print("\nSCHEMA INSPECTION")
-    print("-" * 80)
-    print(f"Schema endpoint        : {schema_url}")
-    print(f"HTTP status            : {status_code}")
-    print(f"Definitions found      : {definitions_found}")
-    print(f"Table definition found : {table_found}")
-
-    print("\nPRIMARY KEY")
-    print("-" * 80)
-    print(f"Primary key detected   : {primary_key_found or 'None'}")
-    print(f"Final result           : {result}")
-    
-    if error:
-        print(f"Warning / error        : {error}")
-
-    print("\nGET TABLE PRIMARY KEY COMPLETE")
-    print("=" * 80)
-##########################
-
+@timed_node()
 def get_table_primary_key(table_name: str = "products") -> str:
     """Inspects table schema directly via Supabase API to find the primary key column."""
     try:
@@ -3105,69 +2539,11 @@ def get_table_primary_key(table_name: str = "products") -> str:
     return "sku"  # manual fallback if schema inspection fails
 
 
-##################### LOGGING --> create_checkout_session #####################
-def log_create_checkout_session(
-    state,
-    products,
-    req_name,
-    target_product,
-    priority,
-    pk_col=None,
-    pk_val=None,
-    db_product=None,
-    stock_count=None,
-    actual_price=None,
-    payment_url=None,
-    error=None
-):
-    # print("\n" + "=" * 100)
-    # print("CREATE CHECKOUT SESSION")
-    # print("=" * 100)
-    log_header("CREATE CHECKOUT SESSION")
 
-    print("CHECKOUT INPUT")
-    print("-" * 80)
-    print(f"Query                  : {state.get('query')}")
-    print(f"Requested product      : {req_name or 'None'}")
-    print(f"Products in memory     : {len(products)}")
-
-    print("\nPRODUCT SELECTION")
-    print("-" * 80)
-    print(f"Priority               : {priority}")
-    print(
-        f"Target product         : "
-        f"{target_product.get('name') if target_product else 'None'}"
-    )
-
-    print("\nDATABASE")
-    print("-" * 80)
-    print(f"Primary key column     : {pk_col or 'None'}")
-    print(f"Primary key value      : {pk_val or 'None'}")
-    print(
-        f"DB product             : "
-        f"{db_product.get('name') if db_product else 'None'}"
-    )
-
-    print("\nSTOCK / PAYMENT")
-    print("-" * 80)
-    print(f"Stock                  : {stock_count if stock_count is not None else 'None'}")
-    print(
-        f"Price                  : "
-        f"₹{actual_price if actual_price is not None else 'None'}"
-    )
-    print(f"Payment URL            : {payment_url or 'None'}")
-
-    if error:
-        print(f"\nERROR / WARNING")
-        print("-" * 80)
-        print(f"{error}")
-
-    print("\nCREATE CHECKOUT SESSION COMPLETE")
-    print("=" * 100)
-##########################
 
 
 @traceable(name="Create Checkout Session", description="Deterministic checkout node with history scanning and Razorpay payment link creation.")
+@timed_node()
 def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> ShoppingState:
     """
     DETERMINISTIC CHECKOUT NODE:
@@ -3476,29 +2852,8 @@ def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> Sho
     #################################
     
 
-##################### LOGGING --> route_after_intent #####################
-def log_route_after_intent(
-    intent_val,
-    next_node
-):
-    # print("\n" + "=" * 80)
-    # print("ROUTE AFTER INTENT")
-    # print("=" * 80)
-    log_header("ROUTE AFTER INTENT")
 
-    print("INPUT")
-    print("-" * 80)
-    print(f"Intent                 : {intent_val or 'None'}")
-
-    print("\nROUTING DECISION")
-    print("-" * 80)
-    print(f"Next node              : {next_node}")
-
-    print("\nROUTE AFTER INTENT COMPLETE")
-    print("=" * 80)
-##########################
-
-
+@timed_node()
 def route_after_intent(state: ShoppingState) -> str:
     """
     Check if intent extracted by LLM is CHECKOUT.
@@ -3531,32 +2886,9 @@ def route_after_intent(state: ShoppingState) -> str:
     return "search_products"
 
 
-################## LOGGING --> fetch_featured #####################
-##################### LOGGING --> fetch_featured #####################
-def log_fetch_featured(
-    distinct_categories,
-    featured_count,
-    fallback_used,
-    error=None
-):
-    print("\n" + "=" * 80)
-    print("FETCH FEATURED")
-    print("=" * 80)
-
-    print("FETCH")
-    print("-" * 80)
-    print(f"Categories found      : {len(distinct_categories)}")
-    print(f"Featured products     : {featured_count}")
-    print(f"Fallback query used   : {fallback_used}")
-
-    if error:
-        print(f"Error                 : {error}")
-
-    print("\nFETCH FEATURED COMPLETE")
-    print("=" * 80)
-##########################
 
 @traceable(name="Fetch Featured", description="Fetch top products per category after an out-of-stock denial / alternative offer.")
+@timed_node()
 def fetch_featured(state: ShoppingState) -> ShoppingState:
     """
     Surfaces real product cards when the user affirms after a denial.
@@ -3638,119 +2970,6 @@ def fetch_featured(state: ShoppingState) -> ShoppingState:
 
 
 
-######################### LOGGING & DEBUGGING #########################
-
-# 1. route_post_sync logging
-def log_route_post_sync_state(route, next_node):
-
-    route = getattr(route, "value", route)
-
-    # print("\n" + "=" * 80)
-    # print("ROUTE POST SYNC")
-    # print("=" * 80)
-    log_header("ROUTE POST SYNC")
-
-    print("\nINPUT")
-    print("-" * 80)
-    print(f"| {'Field':<20} | {'Value':<52} |")
-    print(f"|{'-' * 22}|{'-' * 54}|")
-    print(f"| {'route':<20} | {str(route):<52} |")
-
-    print("\nFLOW")
-    print("-" * 80)
-
-    log_flow(
-        f"""
-        ┌──────────────────────────────────────────────┐
-        │ ROUTER                                       │
-        │                                              │
-        │ route = {str(route):<34} │
-        └──────────────────────┬───────────────────────┘
-                               │
-                               ▼
-        ┌──────────────────────────────────────────────┐
-        │ ROUTE POST SYNC                              │
-        │                                              │
-        │ Check router route                           │
-        └──────────────────────┬───────────────────────┘
-                               │
-                               ▼
-        ┌──────────────────────────────────────────────┐
-        │ NEXT NODE                                    │
-        │                                              │
-        │ {next_node:<44} │
-        └──────────────────────────────────────────────┘
-        """
-    )
-
-    print("\nOUTPUT")
-    print("-" * 80)
-    print(f"| {'next_node':<20} | {next_node:<52} |")
-
-    print("=" * 80)
-
-# 2. route_after_intent logging
-def log_route_after_intent_state(
-    intent,
-    last_action,
-    has_specific_filters,
-    next_node
-):
-    intent_str = str(
-        getattr(getattr(intent, "intent", intent), "value",
-                getattr(intent, "intent", intent))
-        or ""
-    ).lower()
-
-    # print("\n" + "=" * 80)
-    # print("ROUTE AFTER INTENT")
-    # print("=" * 80)
-    log_header("ROUTE AFTER INTENT")
-
-    print("\nINPUT")
-    print("-" * 80)
-    print(f"| {'Field':<25} | {'Value':<47} |")
-    print(f"|{'-' * 27}|{'-' * 49}|")
-    print(f"| {'intent':<25} | {intent_str:<47} |")
-    print(f"| {'last_bot_action':<25} | {str(last_action):<47} |")
-    print(f"| {'has_specific_filters':<25} | {str(has_specific_filters):<47} |")
-
-    print("\nFLOW")
-    print("-" * 80)
-
-    log_flow(
-        f"""
-        ┌──────────────────────────────────────────────┐
-        │ EXTRACT INTENT                               │
-        │                                              │
-        │ intent = {intent_str:<32} │
-        └──────────────────────┬───────────────────────┘
-                               │
-                               ▼
-        ┌──────────────────────────────────────────────┐
-        │ ROUTE AFTER INTENT                            │
-        │                                              │
-        │ Check intent + filters + last action         │
-        └──────────────────────┬───────────────────────┘
-                               │
-                               ▼
-        ┌──────────────────────────────────────────────┐
-        │ NEXT NODE                                    │
-        │                                              │
-        │ {next_node:<44} │
-        └──────────────────────────────────────────────┘
-        """
-    )
-
-    print("\nOUTPUT")
-    print("-" * 80)
-    print(f"| {'Field':<25} | {'Value':<47} |")
-    print(f"|{'-' * 27}|{'-' * 49}|")
-    print(f"| {'next_node':<25} | {next_node:<47} |")
-
-    print("=" * 80)
-
-#################################################
 
 
 # ── GRAPH INITIALIZATION ──────────────────────────────────────────────────────
@@ -3826,7 +3045,13 @@ def route_after_intent(state: ShoppingState) -> str:
         getattr(raw_intent, "product_name", None),
         getattr(raw_intent, "color", None),
         getattr(raw_intent, "size", None),
-        getattr(raw_intent, "price_max", None)
+        getattr(raw_intent, "price_min", None) is not None,
+        getattr(raw_intent, "price_max", None) is not None,
+        getattr(raw_intent, "gender", None),
+        getattr(raw_intent, "occasion", None),
+        getattr(raw_intent, "keyword", None),
+        getattr(raw_intent, "brands", None),
+        getattr(raw_intent, "fit", None),
     ])
 
 

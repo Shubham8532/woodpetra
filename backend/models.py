@@ -103,9 +103,15 @@ class TurnSlots(TypedDict, total=False):
     category: Optional[str]
     keyword: Optional[str]
     color: Optional[str]
+    material: Optional[str]
     size: Optional[str]
+    fit: Optional[str]
+    brands: Optional[List[str]]
+    gender: Optional[str]
     price_min: Optional[int]
     price_max: Optional[int]
+    sort: Optional[str]
+    occasion: Optional[str]
 
 
 
