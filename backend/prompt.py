@@ -1,12 +1,29 @@
 ROUTER_PROMPT = """Classify the user query as either "shopping" or "general".
 
 ### SHOPPING
-Use "shopping" for:
+Use "shopping" when the user is asking for, looking for, or wants recommendations for clothing/apparel, including when the clothing category is NOT explicitly mentioned.
+
+This includes:
 - Clothing/apparel availability, search, price, stock, attributes, filters, or recommendations.
 - Buying/purchasing clothing.
+- What to wear / outfit suggestions.
+- Clothing suggestions for ANY occasion, event, setting, or situation.
 - Occasion/styling/fashion requests.
 - Relative sorting such as "cheapest", "lowest price", "sasta", "most expensive", "show more".
 - Unlisted clothing/fashion items such as saree, kurti, dress, lehenga, suit.
+
+IMPORTANT:
+If the user asks for "something" or "something to wear" for an occasion, event,
+or situation, interpret it as a clothing request and classify it as "shopping"
+even if no clothing category is explicitly mentioned.
+
+Examples:
+- "I need something for a farewell" → shopping
+- "What should I wear to a wedding?" → shopping
+- "Suggest something for an office party" → shopping
+- "I need something for a party" → shopping
+- "What can I wear to college?" → shopping
+- "Show me something for summer" → shopping
 
 ### GENERAL
 Use "general" for:
@@ -57,7 +74,7 @@ INTENT_PROMPT = """You are an AI shopping intent extractor. Your sole job is to 
 - Return exactly ONE JSON object and nothing else.
 
 ### SCHEMA & ALLOWED VALUES
-- intent: "search" | "recommend" | "details" | "checkout" | "greeting" | "general"
+- intent: "search" | "recommend" | "details" | "compare" | "checkout" | "greeting" | "general"
 - category: ONLY one of ["Shirt", "T-Shirt", "Jeans", "Shorts", "Hoodie", "Joggers", "Jacket", "Shoes", "Cap"]. If not an exact supported category, set category to null.
 - sorting_preference: "price_asc" | "price_desc" | null
 - size: ONLY one of ["XS", "S", "M", "L", "XL", "XXL"]. Otherwise null.
@@ -81,15 +98,19 @@ INTENT_PROMPT = """You are an AI shopping intent extractor. Your sole job is to 
    - Questions asking for detailed information about an active specific product.
    - Examples: material, fabric, description, specifications.
 
-4. "checkout":
+4. "compare":
+   - Compare products in the current result pool.
+   - Includes "compare these", "which is better/best", "difference between them", "which should I choose".  
+
+5. "checkout":
    - Explicit purchase intent or checkout request.
    - Examples: "i want to buy this", "ha mujhe khareedna hai", "checkout now", "buy it", "link do", "pay".
 
-5. "greeting":
+6. "greeting":
    - Conversational greetings or thanks.
    - Examples: "hi", "hello", "hey", "thanks", "thank you".
 
-6. "general":
+7. "general":
    - Non-catalog questions
    - Store policies/general questions
    - Food
@@ -402,3 +423,4 @@ RULES:
 
 8. Never imply a purchase is complete unless a checkout link was explicitly generated.
 """
+

@@ -22,7 +22,8 @@ from backend.models import(
     ContextRoute,
     ShoppingIntentModel,
     IntentType,
-    TurnSlots
+    TurnSlots,
+    OccasionCategoryModel
 )
 from backend.prompt import (
     ROUTER_PROMPT,
@@ -37,7 +38,7 @@ razorpay_client = razorpay.Client(
 
 
 
-@timed_node()
+
 @timed_node()
 def invoke_with_fallback(messages, parser=None):
     """
@@ -50,6 +51,12 @@ def invoke_with_fallback(messages, parser=None):
     primary_start = time.perf_counter()
     try:
         raw_res = llm_20B.invoke(messages)
+        ############ TEMPORARY #################
+        print(
+            "[20B META]",
+            getattr(raw_res, "response_metadata", None)
+        )
+        ###########################
         primary_elapsed = time.perf_counter() - primary_start
 
         usage = getattr(raw_res, "usage_metadata", None)
@@ -230,9 +237,11 @@ def reset_turn_slots(state: ShoppingState) -> ShoppingState:
     the current query to prevent stale data leakage.
     """
     return {
-        "products": [],
-        "similar_products": [],
-        "displayed_products": [],
+        ######## TEMPORARY REMOVED ############
+        # "products": [],
+        # "similar_products": [],
+        # "displayed_products": [],
+        ####################################
         "turn_slots": {
             "product_name": None,
             "category": None,
@@ -498,29 +507,6 @@ Conversation History:
 Current User Query:
 {state["query"]}"""
 
-    # print("=" * 80)
-    # print(prompt)
-    # print("=" * 80)
-    
-    # history = load_history(config)
-
-    # print(history)
-
-    # history_text = build_conversation(history)
-
-    # print(history_text)
-
-    # print(config)
-
-    # print("history =", history)
-    # from pprint import pprint
-
-    # print("=" * 80)
-    # print("HISTORY")
-    # pprint(history)
-    # print("=" * 80)
-
-    # print ("above is in json format..and below is in structured format")
     ################## LOGGING CALL ##################
     log_general_chat_llm_context(
         query=state["query"],
@@ -529,20 +515,6 @@ Current User Query:
         prompt=prompt,
         system_prompt=GENERAL_CHAT_PROMPT,
     )
-###########################################
-#     response = llm_fast.invoke(
-#     [
-#         (
-#             "system",
-#             GENERAL_CHAT_PROMPT,
-#             ),
-#         (
-#             "human",
-#             prompt
-#         )
-#     ]
-# )
-
     # 20B Primary with Fallback (No parser passed -> returns clean response string)
     try:
         response_text = invoke_with_fallback([
@@ -553,35 +525,6 @@ Current User Query:
         print(f"[general_chat Error]: {e}")
         response_text = "I'm here to help! What style or clothing item are you looking for today?"
 
-    # BEFORE: general_chat always wrote last_bot_action='offered_alternatives',
-    # even for pure greetings ("hi", "hello"). This poisoned the next turn:
-    # a food query like "samosa hai kya" after a greeting would find
-    # last_bot_action='offered_alternatives' and incorrectly hit fetch_featured.
-    #
-    # AFTER: only set 'offered_alternatives' when the query is a genuine denial
-    # (non-apparel / food / out-of-catalog). Pure greetings preserve the
-    # existing last_bot_action (or leave it as None) so they don't create a
-    # false denial signal.
-    # _PURE_GREETING_WORDS = frozenset({
-    #     "hi", "hii", "hiii", "hello", "hey", "helo", "hlo", "hola",
-    #     "good morning", "good afternoon", "good evening", "goodnight",
-    #     "gud morning", "gud mrng", "greetings", "namaste", "namaskar",
-    #     "thanks", "thank you", "shukriya", "bye", "goodbye",
-    # })
-    # query_lower = state.get("query", "").lower().strip()
-    # is_pure_greeting = query_lower in _PURE_GREETING_WORDS
-
-    # if is_pure_greeting:
-    #     # Greeting: preserve whatever last_bot_action was (don't overwrite)
-    #     next_last_bot_action = state.get("last_bot_action")
-    # else:
-    #     # Genuine denial / out-of-catalog / food query: signal for next-turn routing
-    #     next_last_bot_action = "offered_alternatives"
-
-    # print(f"[general_chat] is_pure_greeting={is_pure_greeting}  next_last_bot_action={next_last_bot_action!r}")
-
-    # Pure AI-Intent Signal Tracking (No Manual Hardcoded Word Sets!)
-    # Re-uses the intent already extracted by the parallel `extract_intent` node.
     intent_obj = state.get("intent")
     intent_type = getattr(intent_obj, "intent", intent_obj)
     intent_str = str(getattr(intent_type, "value", intent_type) or "").lower()
@@ -610,7 +553,7 @@ Current User Query:
 
 @traceable(name="Build Conversation", description="Convert LangGraph checkpoints into a clean conversation history.")
 @timed_node()
-def build_conversation(history, max_turns=8):
+def build_conversation(history, max_turns=6):
     """
     Converts recent conversation turns into structured context for intent extraction.
 
@@ -755,33 +698,7 @@ def extract_intent(
 # #############################
 
     query = state['query']
-    # ################### TEMP LOGGING #################
-    # print("\n[DEBUG] EXTRACT_INTENT STATE")
-    # print("turn_slots at start:", state.get("turn_slots"))
-    # ####################################
-    # Can comment out for 70 model
-    # structured_output = llm.with_structured_output(ShoppingIntentModel)
 
-    ################### TEMPORARY DEBUGGING #####################
-#     system_prompt = INTENT_PROMPT + f"""
-# Active Category: {active_category if active_category else "None"}
-# History (Last 8 turns):
-# {history_text}
-    
-#     system_prompt = INTENT_PROMPT + f"""
-# ### CURRENT CONTEXT
-# Active Category: {active_category or "None"}
-
-# Previous History:
-# {history_text}
-
-# ### CONTEXT PRIORITY
-# 1. Current user query has highest priority.
-# 2. Active Category persists when no new category is explicitly mentioned.
-# 3. Previous History provides product/reference context for follow-ups.
-# 4. Current-turn color, size, price, and keyword override previous values and otherwise remain null.
-# 5. Do not use an older category when Active Category is available.
-# """
 
     system_prompt = INTENT_PROMPT + f"""
 Active Category: {active_category if active_category else "None"}
@@ -802,6 +719,14 @@ History (Last 8 turns):
     system_with_schema = (
         system_prompt + f"\n\nOUTPUT FORMAT:\nReturn ONLY a raw JSON object matching the schema below (no markdown, no backticks).\n{format_instructions}"
     )
+
+    #################### TEMPORARY FULL PROMPT DEBUG #####################
+    # print("\n" + "=" * 100)
+    # print("ACTUAL INTENT SYSTEM PROMPT")
+    # print("=" * 100)
+    # print(system_with_schema)
+    # print("=" * 100)
+    ######################################################################
     #################### TEMPORARY TOKENS DEBBUGGING #####################
     print(
         f"[INTENT FINAL PROMPT SIZE] "
@@ -1259,40 +1184,154 @@ def search_product(state: ShoppingState) -> ShoppingState:
             f"gender={getattr(intent, 'gender', None)}"
         )
 
-        # Find catalog categories whose descriptions support the occasion.
         occasion = intent.occasion.lower().strip()
 
         try:
-            catalog_rows = (
+            # ---------------------------------------------------------
+            # Get the ACTUAL categories currently available in catalog.
+            # LLM can only choose from these categories.
+            # ---------------------------------------------------------
+            category_rows = (
                 supabase
                 .table("products")
-                .select("category,description")
+                .select("category")
                 .execute()
                 .data
                 or []
             )
 
+            available_categories = []
             seen_categories = set()
 
-            for row in catalog_rows:
+            for row in category_rows:
                 category = row.get("category")
-                description = (row.get("description") or "").lower()
 
-                if category and occasion in description:
-                    if category not in seen_categories:
-                        matched_categories.append(category)
-                        seen_categories.add(category)
+                if category and category not in seen_categories:
+                    available_categories.append(category)
+                    seen_categories.add(category)
 
             terminal_search_log(
-                f"      Catalog occasion matches : "
+                f"      Catalog categories : {available_categories}"
+            )
+
+            # ---------------------------------------------------------
+            # Ask LLM which EXISTING catalog categories suit
+            # the requested occasion.
+            # ---------------------------------------------------------
+            occasion_prompt = f"""
+Select the best clothing categories from the catalog for this request.
+
+Gender: {getattr(intent, 'gender', None)}
+Occasion: {intent.occasion}
+
+Catalog categories:
+{available_categories}
+
+Rules:
+- Return at most 5-8 categories, ranked most relevant first.
+- Choose PRIMARY clothing/outfit categories, not accessories.
+- For unspecified gender, consider suitable categories for both men and women.
+- If gender is specified, prefer categories suitable for that gender.
+- Match the occasion closely.
+- Exclude accessories such as belts, wallets, watches, jewellery, bags,
+  perfumes, makeup, etc., unless the user explicitly asks for them.
+- Return ONLY exact category names from the catalog.
+- Never invent, rename, or modify category names.
+- If no suitable category exists, return [].
+
+Return ONLY JSON:
+{{"categories": ["Category1", "Category2", "Category3"]}}
+"""
+
+            occasion_parser = PydanticOutputParser(
+                pydantic_object=OccasionCategoryModel
+            )
+
+            occasion_messages = [
+                (
+                    "system",
+                    "Select suitable existing catalog categories for the occasion."
+                ),
+                (
+                    "human",
+                    occasion_prompt
+                )
+            ]
+
+            occasion_result = invoke_with_fallback(
+                occasion_messages,
+                parser=occasion_parser
+            )
+
+            # ---------------------------------------------------------
+            # Normalize LLM output against the ACTUAL DB categories.
+            # This protects against case differences or hallucinated
+            # category names.
+            # ---------------------------------------------------------
+            category_lookup = {
+                category.lower(): category
+                for category in available_categories
+            }
+
+            matched_categories = []
+
+            for category in occasion_result.categories:
+                normalized_category = category_lookup.get(
+                    category.strip().lower()
+                )
+
+                if normalized_category:
+                    matched_categories.append(normalized_category)
+
+            matched_categories = matched_categories[:8]
+
+            terminal_search_log(
+                f"      LLM occasion categories : "
                 f"{matched_categories if matched_categories else 'none'}"
             )
 
         except Exception as e:
+            # ---------------------------------------------------------
+            # SAFETY FALLBACK:
+            # Preserve the OLD working occasion behavior if the
+            # occasion LLM call fails.
+            # ---------------------------------------------------------
             terminal_search_log(
-                f"CATALOG OCCASION LOOKUP FAILED | {e}",
+                f"OCCASION LLM LOOKUP FAILED | {e}",
                 handle=search_log_handle
             )
+
+            try:
+                catalog_rows = (
+                    supabase
+                    .table("products")
+                    .select("category,description")
+                    .execute()
+                    .data
+                    or []
+                )
+
+                seen_categories = set()
+
+                for row in catalog_rows:
+                    category = row.get("category")
+                    description = (row.get("description") or "").lower()
+
+                    if category and occasion in description:
+                        if category not in seen_categories:
+                            matched_categories.append(category)
+                            seen_categories.add(category)
+
+                terminal_search_log(
+                    f"      Legacy occasion fallback : "
+                    f"{matched_categories if matched_categories else 'none'}"
+                )
+
+            except Exception as fallback_error:
+                terminal_search_log(
+                    f"CATALOG OCCASION FALLBACK FAILED | {fallback_error}",
+                    handle=search_log_handle
+                )
 
     ######################### AGAIN LOGGING CALL ###############
     log_search(
@@ -1617,6 +1656,15 @@ def search_product(state: ShoppingState) -> ShoppingState:
             ##################################################
             query = query.eq("category", intent.category)
 
+        elif matched_categories:
+            ######################## LOGGING CALL ###########
+            log_search(
+                f"Investigation: applying OCCASION CATEGORIES = {matched_categories}",
+                handle=search_log_handle
+            )
+            ##################################################
+            query = query.in_("category", matched_categories)
+
         elif intent.keyword:
             ####################### AGAIN LOGGING CALL ##########
             log_search(
@@ -1625,7 +1673,11 @@ def search_product(state: ShoppingState) -> ShoppingState:
             )
             ##########################################
             
-            query = query.or_(f"name.ilike.%{clean_kw}%,description.ilike.%{clean_kw}%,category.ilike.%{clean_kw}%")
+            query = query.or_(
+                f"name.ilike.%{clean_kw}%,"
+                f"description.ilike.%{clean_kw}%,"
+                f"category.ilike.%{clean_kw}%"
+            )
 
         if intent.color:
             ##################### LOGGING CALL ################
@@ -2066,7 +2118,11 @@ def search_product(state: ShoppingState) -> ShoppingState:
     ##########################
 
     # If category wasn't in intent, infer it from the first primary product found
-    if not category_to_recommend and products:
+    # if not category_to_recommend and products:
+    # Updated:
+    # normal category-less search → old behavior remains
+    # occasion search → don't randomly choose category from product #1
+    if not category_to_recommend and products and not getattr(intent, "occasion", None):
         ############## AGAIN LOGGING CALL ###############
         log_search(
             "Investigation: category not present in intent.",
@@ -2302,13 +2358,16 @@ def generate_response(state: ShoppingState) -> ShoppingState:
         intent_val = getattr(raw_intent, "value", raw_intent)
     intent_str = str(intent_val if intent_val is not None else "").lower()
 
-    # Safe extraction of route string from state
+    # General turn check — driven entirely by extracted intent
+    # is_general = intent_str in ["general", "greeting", "out_of_scope"]
+    
+    Safe extraction of route string from state
     route_raw = state.get("route")
     route_val = str(getattr(route_raw, "value", route_raw) if route_raw is not None else "").lower()
 
     # General turn check
     is_general = intent_str in ["general", "greeting", "out_of_scope"] or route_val in ["general", "general_chat"]
-
+    
     # 2. PAYMENT URL CHECK
     payment_url = state.get("payment_url") if intent_str == "checkout" else None
 
@@ -2330,13 +2389,95 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     else:
         eval_products = products[:5]
 
+    # selected_product = None
+
+    # if products:
+    #     intent_product_name = getattr(raw_intent, "product_name", None)
+
+    #     if intent_product_name:
+    #         named_match = next(
+    #             (
+    #                 p for p in products
+    #                 if intent_product_name.lower() in p.get("name", "").lower()
+    #             ),
+    #             None
+    #         )
+    #         if named_match:
+    #             selected_product = named_match
+
+    #     elif is_cheapest:
+    #         selected_product = min(
+    #             products,
+    #             key=lambda p: float(p.get("price") or float("inf"))
+    #         )
+
+    #     elif is_expensive:
+    #         selected_product = max(
+    #             products,
+    #             key=lambda p: float(p.get("price") or 0)
+    #         )
+
+    #     elif len(products) == 1:
+    #         selected_product = products[0]
+
+    ############### PRODUCT FOCUS ############################
+
+    selected_product = None
+
+    if products:
+        intent_product_name = getattr(raw_intent, "product_name", None)
+
+        # ------------------------------------------------------
+        # 1. Explicit product reference
+        #    → select that exact product.
+        # ------------------------------------------------------
+        if intent_product_name:
+            named_match = next(
+                (
+                    p for p in products
+                    if intent_product_name.lower() in p.get("name", "").lower()
+                ),
+                None
+            )
+
+            if named_match:
+                selected_product = named_match
+
+        elif is_cheapest:
+            selected_product = min(
+                products,
+                key=lambda p: float(p.get("price") or float("inf"))
+            )
+
+        elif is_expensive:
+            selected_product = max(
+                products,
+                key=lambda p: float(p.get("price") or 0)
+            )
+        # ------------------------------------------------------
+        # 2. Exactly ONE result
+        #    → safe to treat it as the selected product.
+        # ------------------------------------------------------
+        elif len(products) == 1:
+            selected_product = products[0]
+
+        # ------------------------------------------------------
+        # 3. Multiple results
+        #    → they are a candidate/result pool.
+        #    DO NOT arbitrarily select products[0].
+        # ------------------------------------------------------
+        else:
+            selected_product = None
+    #############################################################
+    """
     ############### TEMPORARY  DEBUG LOGGING ###############
     # Current search results are authoritative for this turn.
     # Do not reuse an old selected product when the current query
     # produced a new set of products.
-    selected_product = products[0] if products else None
+    # selected_product = products[0] if products else None
     # selected_product = state.get("selected_product") or (products[0] if products else None)
     #############################################################
+    """
 
     # 4. CHECKOUT RESPONSE BRANCH
     if intent_str == "checkout" and payment_url:
@@ -2368,15 +2509,53 @@ def generate_response(state: ShoppingState) -> ShoppingState:
         api_similar_products = similar_products[:5]
         prompt_eval_products = eval_products
 
+    """
+    # prompt_products = []
+    # for p in prompt_eval_products:
+    #     prompt_products.append({
+    #         "category": p.get("category"),
+    #         "name": p.get("name"),
+    #         "price": f"₹{p.get('price')}",
+    #         "color": p.get("color"),
+    #         "size": p.get("size")
+    #     })
+    """
+    # PRODUCT DETAILS FOR RESPONSE LLM
+    #
+    # Descriptions are included only when they are useful:
+    # - compare/recommend over a product pool
+    # - specific product / active product follow-up
+    include_description = (
+        intent_str in ("compare", "recommend")
+        or selected_product is not None
+        or state.get("active_focus_product") is not None
+    )
+
     prompt_products = []
+
     for p in prompt_eval_products:
-        prompt_products.append({
+        product_data = {
             "category": p.get("category"),
             "name": p.get("name"),
             "price": f"₹{p.get('price')}",
             "color": p.get("color"),
             "size": p.get("size")
-        })
+        }
+
+        if include_description:
+            description = p.get("description")
+
+            if description:
+                # Keep description short to control prompt tokens.
+                words = str(description).split()
+                short_description = " ".join(words[:25])
+
+                if len(words) > 25:
+                    short_description += "..."
+
+                product_data["description"] = short_description
+
+        prompt_products.append(product_data)
 
     # METADATA SUMMARIES
     if prompt_eval_products:
@@ -2426,6 +2605,78 @@ INSTRUCTIONS:
         next_bot_action = state.get("last_bot_action")
 
     ##################### TEMPORARY DEBUG LOGGING #####################
+    # next_focus = state.get("active_focus_product")
+
+    # if products and intent_str not in ("general", "greeting", "out_of_scope"):
+    #     intent_product_name = getattr(raw_intent, "product_name", None)
+    #     intent_category = getattr(raw_intent, "category", None)
+    #     intent_occasion = getattr(raw_intent, "occasion", None)
+
+    #     # Explicit product / product follow-up
+    #     if intent_product_name:
+    #         named_match = next(
+    #             (
+    #                 p for p in products
+    #                 if intent_product_name.lower() in p.get("name", "").lower()
+    #             ),
+    #             None
+    #         )
+
+    #         if named_match:
+    #             next_focus = named_match
+
+    #     # Occasion recommendation is a recommendation pool,
+    #     # NOT a product/category focus.
+    #     elif intent_occasion and not intent_category:
+    #         next_focus = None
+
+        ##################### ACTIVE PRODUCT FOCUS #####################
+
+    next_focus = state.get("active_focus_product")
+
+    if products and intent_str not in ("general", "greeting", "out_of_scope"):
+        intent_product_name = getattr(raw_intent, "product_name", None)
+
+        # ------------------------------------------------------
+        # 1. Explicit product reference
+        #    → establish / update product focus.
+        # ------------------------------------------------------
+        if intent_product_name:
+            named_match = next(
+                (
+                    p for p in products
+                    if intent_product_name.lower() in p.get("name", "").lower()
+                ),
+                None
+            )
+
+            if named_match:
+                next_focus = named_match
+
+        # ------------------------------------------------------
+        # 2. Exactly one result
+        #    → safe to establish product focus.
+        # ------------------------------------------------------
+        elif len(products) == 1:
+            next_focus = products[0]
+
+        # ------------------------------------------------------
+        # 3. Multiple results
+        #    → keep them as a result pool.
+        #    Do NOT pick products[0].
+        # ------------------------------------------------------
+        else:
+            next_focus = None
+        """
+        # # Explicit category search
+        # elif intent_category:
+        #     next_focus = products[0]
+
+        # # Existing fallback for other shopping searches
+        # else:
+        #     next_focus = products[0]
+        """
+    """
     next_focus = state.get("active_focus_product")
 
     if products and intent_str not in ("general", "greeting", "out_of_scope"):
@@ -2445,6 +2696,8 @@ INSTRUCTIONS:
             # No explicit product name means this is a fresh/current
             # product search. Focus on the current result, not an old one.
             next_focus = products[0]
+    """
+
     # next_focus = state.get("active_focus_product")
     # if products and intent_str not in ("general", "greeting", "out_of_scope"):
     #     intent_product_name = getattr(raw_intent, "product_name", None)
@@ -2853,37 +3106,37 @@ def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> Sho
     
 
 
-@timed_node()
-def route_after_intent(state: ShoppingState) -> str:
-    """
-    Check if intent extracted by LLM is CHECKOUT.
-    If yes -> Branch directly to create_checkout_session.
-    If no  -> Continue normal flow to context_decision.
-    """
-    raw_intent = state.get("intent")
+# @timed_node()
+# def route_after_intent(state: ShoppingState) -> str:
+#     """
+#     Check if intent extracted by LLM is CHECKOUT.
+#     If yes -> Branch directly to create_checkout_session.
+#     If no  -> Continue normal flow to context_decision.
+#     """
+#     raw_intent = state.get("intent")
     
-    # Extract intent string safely whether raw_intent is a Pydantic model, Enum, or raw string
-    if hasattr(raw_intent, "intent"):
-        intent_val = getattr(raw_intent.intent, "value", raw_intent.intent)
-    else:
-        intent_val = getattr(raw_intent, "value", raw_intent)
+#     # Extract intent string safely whether raw_intent is a Pydantic model, Enum, or raw string
+#     if hasattr(raw_intent, "intent"):
+#         intent_val = getattr(raw_intent.intent, "value", raw_intent.intent)
+#     else:
+#         intent_val = getattr(raw_intent, "value", raw_intent)
 
-    if str(intent_val).lower() == "checkout":
-        ################### LOGGING CALL ################
-        log_route_after_intent(
-            intent_val=intent_val,
-            next_node="create_checkout_session"
-        )
-        ###############################################
-        return "create_checkout_session"
+#     if str(intent_val).lower() == "checkout":
+#         ################### LOGGING CALL ################
+#         log_route_after_intent(
+#             intent_val=intent_val,
+#             next_node="create_checkout_session"
+#         )
+#         ###############################################
+#         return "create_checkout_session"
 
-    ############### LOGGING CALL ################
-    log_route_after_intent(
-        intent_val=intent_val,
-        next_node="search_products"
-    )
-    ###########################################
-    return "search_products"
+#     ############### LOGGING CALL ################
+#     log_route_after_intent(
+#         intent_val=intent_val,
+#         next_node="search_products"
+#     )
+#     ###########################################
+#     return "search_products"
 
 
 
@@ -3032,6 +3285,14 @@ def route_after_intent(state: ShoppingState) -> str:
     - Affirmation ('yes'/'sure' without product filters) -> fetch_featured
     - Product Search (with color/size/category filters) -> search_products
     """
+
+    ################ TEMPORARY DEBUG LOGGING #####################
+    print(
+        "[RESULT POOL DEBUG]",
+        f"products={len(state.get('products') or [])}",
+        f"displayed_products={len(state.get('displayed_products') or [])}"
+    )
+    ######################################
     raw_intent = state.get("intent")
     intent_val = getattr(raw_intent, "intent", raw_intent)
     intent_str = str(getattr(intent_val, "value", intent_val) or "").lower()
@@ -3071,8 +3332,85 @@ def route_after_intent(state: ShoppingState) -> str:
     # # 4. Default: Search DB for the requested product
     # return "search_products"
 
+    """
     if intent_str == "checkout":
             next_step = "create_checkout_session"
+
+    elif (
+        last_action in ("offered_alternatives", "denied_oos")
+        and not has_specific_filters
+    ):
+        next_step = "fetch_featured"
+
+    elif intent_str == "recommend" and not has_specific_filters:
+        next_step = "fetch_featured"
+
+    else:
+        next_step = "search_products
+    """
+
+    existing_products = state.get("products") or []
+
+    sort_val = getattr(raw_intent, "sort", None)
+    sort_str = str(getattr(sort_val, "value", sort_val) or "").lower()
+
+    if (
+        intent_str == "compare"
+        and existing_products
+        and not getattr(raw_intent, "product_name", None)
+        and not getattr(raw_intent, "color", None)
+        and not getattr(raw_intent, "size", None)
+        and getattr(raw_intent, "occasion", None) is None
+    ):
+        next_step = "generate_response"
+
+    elif (
+        intent_str == "search"
+        and existing_products
+        and sort_str in ("price_asc", "price_desc")
+        and not getattr(raw_intent, "product_name", None)
+        and not getattr(raw_intent, "color", None)
+        and not getattr(raw_intent, "size", None)
+        and getattr(raw_intent, "price_min", None) is None
+        and getattr(raw_intent, "price_max", None) is None
+        and not getattr(raw_intent, "material", None)
+        and not getattr(raw_intent, "fit", None)
+        and not getattr(raw_intent, "brands", None)
+        and not getattr(raw_intent, "keyword", None)
+    ):
+        next_step = "generate_response"
+
+    # elif (
+    #     intent_str == "recommend"
+    #     and existing_products
+    #     and not getattr(raw_intent, "product_name", None)
+    #     and not getattr(raw_intent, "color", None)
+    #     and not getattr(raw_intent, "size", None)
+    #     # and getattr(raw_intent, "occasion", None) is None
+    # ):
+    #     next_step = "generate_response"
+    elif (
+        intent_str == "recommend"
+        and existing_products
+        and not any([
+            getattr(raw_intent, "product_name", None),
+            getattr(raw_intent, "category", None),
+            getattr(raw_intent, "color", None),
+            getattr(raw_intent, "size", None),
+            getattr(raw_intent, "price_min", None) is not None,
+            getattr(raw_intent, "price_max", None) is not None,
+            getattr(raw_intent, "material", None),
+            getattr(raw_intent, "fit", None),
+            getattr(raw_intent, "brands", None),
+            getattr(raw_intent, "gender", None),
+            getattr(raw_intent, "keyword", None),
+            getattr(raw_intent, "occasion", None),
+        ])
+    ):
+        next_step = "generate_response"
+
+    elif intent_str == "checkout":
+        next_step = "create_checkout_session"
 
     elif (
         last_action in ("offered_alternatives", "denied_oos")
@@ -3116,6 +3454,7 @@ graph.add_conditional_edges(
         "create_checkout_session": "create_checkout_session",
         "search_products": "search_products",
         "fetch_featured": "fetch_featured",
+        "generate_response": "generate_response",
     }
 )
 

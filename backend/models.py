@@ -48,6 +48,12 @@ class SortOption(str, Enum):
     NEWEST = "newest"
     POPULAR = "popular"
 
+class OccasionCategoryModel(BaseModel):
+    categories: List[str] = Field(
+        default_factory=list,
+        description="Existing product categories suitable for the requested occasion."
+    )
+
 
 class RouterModel(BaseModel):
     """
