@@ -2361,7 +2361,7 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     # General turn check — driven entirely by extracted intent
     # is_general = intent_str in ["general", "greeting", "out_of_scope"]
     
-    Safe extraction of route string from state
+    # Safe extraction of route string from state
     route_raw = state.get("route")
     route_val = str(getattr(route_raw, "value", route_raw) if route_raw is not None else "").lower()
 
