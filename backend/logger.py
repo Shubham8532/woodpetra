@@ -858,7 +858,7 @@ def log_generate_response(
     products,
     similar_products,
     intent_str,
-    route_val,
+    # route_val,
     is_general,
     payment_url,
     sort_val,
@@ -867,7 +867,7 @@ def log_generate_response(
     api_displayed_products,
     api_similar_products,
     response_text,
-    next_bot_action,
+    # next_bot_action,
     next_focus
 ):
     # print("\n" + "=" * 100)
@@ -879,7 +879,7 @@ def log_generate_response(
     print("-" * 80)
     print(f"Query                  : {state.get('query')}")
     print(f"Intent                 : {intent_str}")
-    print(f"Route                  : {route_val or 'None'}")
+    # print(f"Route                  : {route_val or 'None'}")
     print(f"General request        : {is_general}")
     print(f"Products received      : {len(products)}")
     print(f"Similar products       : {len(similar_products)}")
@@ -907,7 +907,7 @@ def log_generate_response(
     print("\nRESPONSE OUTPUT")
     print("-" * 80)
     print(f"Response length        : {len(response_text)} characters")
-    print(f"Next bot action        : {next_bot_action}")
+    # print(f"Next bot action        : {next_bot_action}")
     print(
         f"Active focus product   : "
         f"{next_focus.get('name') if next_focus else 'None'}"
@@ -1122,7 +1122,7 @@ def log_route_post_sync_state(route, next_node):
 # 2. route_after_intent logging
 def log_route_after_intent_state(
     intent,
-    last_action,
+    # last_action,
     has_specific_filters,
     next_node
 ):
@@ -1142,7 +1142,7 @@ def log_route_after_intent_state(
     print(f"| {'Field':<25} | {'Value':<47} |")
     print(f"|{'-' * 27}|{'-' * 49}|")
     print(f"| {'intent':<25} | {intent_str:<47} |")
-    print(f"| {'last_bot_action':<25} | {str(last_action):<47} |")
+    # print(f"| {'last_bot_action':<25} | {str(last_action):<47} |")
     print(f"| {'has_specific_filters':<25} | {str(has_specific_filters):<47} |")
 
     print("\nFLOW")

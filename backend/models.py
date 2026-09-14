@@ -54,6 +54,9 @@ class OccasionCategoryModel(BaseModel):
         description="Existing product categories suitable for the requested occasion."
     )
 
+class AlternativeCategoryModel(BaseModel):
+    closest_categories: List[str] = Field(default_factory=list)
+    common_categories: List[str] = Field(default_factory=list)
 
 class RouterModel(BaseModel):
     """
@@ -128,6 +131,7 @@ class ShoppingState(TypedDict):
     intent: ShoppingIntentModel | None = Field(None, description="Extracted shopping intent from the query")
     products: List[dict] | None = Field(None, description="List of products matching the shopping intent")
     similar_products: List[dict] | None = Field(None, description="List of similar products for recommendations")
+    alternative_categories: List[str] | None = Field(None, description="Catalog categories selected as relevant alternatives for an out-of-stock request")
     selected_product: Optional[dict] = Field(None, description="The product selected by the user for details or checkout")
     payment_url: Optional[str] = Field(None, description="Payment URL for checkout if applicable")
     response: str | None = Field(None, description="Response to the user based on the shopping intent and products")

@@ -23,7 +23,8 @@ from backend.models import(
     ShoppingIntentModel,
     IntentType,
     TurnSlots,
-    OccasionCategoryModel
+    OccasionCategoryModel,
+    AlternativeCategoryModel
 )
 from backend.prompt import (
     ROUTER_PROMPT,
@@ -525,20 +526,28 @@ Current User Query:
         print(f"[general_chat Error]: {e}")
         response_text = "I'm here to help! What style or clothing item are you looking for today?"
 
+    # intent_obj = state.get("intent")
+    # intent_type = getattr(intent_obj, "intent", intent_obj)
+    # intent_str = str(getattr(intent_type, "value", intent_type) or "").lower()
+
+    # if intent_str == "greeting":
+    #     # Pure greeting (e.g., "hi", "yo", "namaste"): preserve existing signal
+    #     # next_last_bot_action = state.get("last_bot_action")
+
+    # else:
+    #    # Out-of-catalog / non-apparel query (e.g., "samosa", "curtains"): 
+    #     # Set signal so the next-turn affirmative ("ha"/"yes") triggers product cards
+    #     next_last_bot_action = "offered_alternatives" 
+
+    # print(f"[general_chat] intent={intent_str!r}  next_last_bot_action={next_last_bot_action!r}")
+
     intent_obj = state.get("intent")
     intent_type = getattr(intent_obj, "intent", intent_obj)
-    intent_str = str(getattr(intent_type, "value", intent_type) or "").lower()
+    intent_str = str(
+        getattr(intent_type, "value", intent_type) or ""
+    ).lower()
 
-    if intent_str == "greeting":
-        # Pure greeting (e.g., "hi", "yo", "namaste"): preserve existing signal
-        next_last_bot_action = state.get("last_bot_action")
-
-    else:
-       # Out-of-catalog / non-apparel query (e.g., "samosa", "curtains"): 
-        # Set signal so the next-turn affirmative ("ha"/"yes") triggers product cards
-        next_last_bot_action = "offered_alternatives" 
-
-    print(f"[general_chat] intent={intent_str!r}  next_last_bot_action={next_last_bot_action!r}")
+    print(f"[general_chat] intent={intent_str!r}")
 
     return {
         "response": response_text,
@@ -546,7 +555,7 @@ Current User Query:
         "displayed_products": [],
         "similar_products": [],
         "selected_product": state.get("selected_product"),  # Memory intact for Turn 4 checkout!
-        "last_bot_action": next_last_bot_action,
+        # "last_bot_action": next_last_bot_action,
     }
 
 
@@ -700,12 +709,22 @@ def extract_intent(
     query = state['query']
 
 
+    ############# Since we are removing ROuter ################
+    # last_bot_action = state.get("last_bot_action") or "none"
+    ##########################################
+
     system_prompt = INTENT_PROMPT + f"""
 Active Category: {active_category if active_category else "None"}
 
 History (Last 8 turns):
 {history_text}
 """
+#     system_prompt = INTENT_PROMPT + f"""
+# Active Category: {active_category if active_category else "None"}
+
+# History (Last 8 turns):
+# {history_text}
+# """
     
     ############## TEMPORARY TOKENS DEBUGGING #####################
     print(
@@ -1174,8 +1193,8 @@ def search_product(state: ShoppingState) -> ShoppingState:
         return {"products": [] , "similar_products": []}
     
     products = []
-
     matched_categories = []
+    alternative_categories = []
 
     if getattr(intent, "occasion", None):
         terminal_search_log(
@@ -1923,96 +1942,436 @@ Return ONLY JSON:
                 f"      Result : {len(products)}"
             )
             ###################################
+        """
+        # # --- FALLBACK 4: MULTI-CATEGORY STORE BALANCER (LAST RESORT ONLY) ---
+        # # Triggers ONLY if the query has no valid category, color, or keyword match anywhere in DB
+        # if not products:
 
-        # --- FALLBACK 4: MULTI-CATEGORY STORE BALANCER (LAST RESORT ONLY) ---
-        # Triggers ONLY if the query has no valid category, color, or keyword match anywhere in DB
+        #     ################# LOGGING CALL ##############
+        #     terminal_search_path(
+        #         "Store-wide fallback",
+        #         (
+        #             "All previous searches returned 0 → "
+        #             "balancing products across available categories"
+        #         )
+        #     )
+
+        #     log_search_step(
+        #         search_log_handle,
+        #         "TIER 2 → FALLBACK 4",
+        #         "All previous searches returned 0 → entering multi-category store balancer",
+        #         search_start,
+        #         0
+        #     )
+
+        #     log_search(
+        #         "Investigation: fetching available categories.",
+        #         handle=search_log_handle
+        #     )
+        #     ########################################
+
+        #     all_cats = supabase.table("products").select("category").execute().data
+        #     ################### AGAIN LOGGING CALL ###############
+        #     log_search(
+        #         f"Investigation: category rows retrieved = {len(all_cats)}",
+        #         handle=search_log_handle
+        #     )
+        #     ####################################################
+            
+        #     distinct_categories = list(set(p.get("category") for p in all_cats if p.get("category")))
+        #     ################### AGAIN LOGGING CALL ###############
+        #     log_search(
+        #         f"Investigation: distinct categories = {distinct_categories}",
+        #         handle=search_log_handle
+        #     )
+
+        #     # Human terminal explanation
+        #     terminal_search_log(
+        #         f"      Categories available : "
+        #         f"{len(distinct_categories)}"
+        #     )
+        #     ####################################################
+
+        #     balanced_products = []
+        #     for cat in distinct_categories:
+        #         ################### AGAIN LOGGING CALL ###############
+        #         log_search(
+        #             f"Investigation: FALLBACK 4 querying category='{cat}' | limit=5",
+        #             handle=search_log_handle
+        #         )
+        #         ####################################################
+        #         cat_items = (
+        #             supabase.table("products")
+        #             .select("*")
+        #             .eq("category", cat)
+        #             .order("price", desc=False)
+        #             .limit(5)
+        #             .execute()
+        #             .data
+        #         )
+        #         ################### AGAIN LOGGING CALL ###############
+        #         log_search(
+        #             f"Investigation: category='{cat}' returned {len(cat_items)} products",
+        #             handle=search_log_handle
+        #         )
+        #         ####################################################
+
+        #         balanced_products.extend(cat_items)
+        #     products = balanced_products if balanced_products else supabase.table("products").select("*").order("price", desc=False).limit(15).execute().data
+
+        #     ################ AGAIN LOGGING CALL ########
+        #     log_search_query(
+        #         search_log_handle,
+        #         "TIER 2 → FALLBACK 4",
+        #         "Final multi-category balanced result",
+        #         products,
+        #         search_start
+        #     )
+        #     terminal_search_log(
+        #         f"      Products collected   : "
+        #         f"{len(products)}"
+        #     )
+        #     ###########################################
+        """
+        # # --- FALLBACK 4: OUT-OF-STOCK ALTERNATIVES ---
+        # # If the requested product/category/keyword does not exist,
+        # # select relevant clothing categories and show alternatives
+        # # directly in the same turn.
+
+        # if not products:
+
+        #     terminal_search_path(
+        #         "Out-of-stock alternatives",
+        #         (
+        #             "All direct searches returned 0 → "
+        #             "selecting relevant clothing categories"
+        #         )
+        #     )
+
+        #     log_search_step(
+        #         search_log_handle,
+        #         "TIER 2 → FALLBACK 4",
+        #         (
+        #             "No matching products found → "
+        #             "selecting relevant catalog categories"
+        #         ),
+        #         search_start,
+        #         0
+        #     )
+
+        #     try:
+        #         # Get actual categories from the catalog
+        #         category_rows = (
+        #             supabase
+        #             .table("products")
+        #             .select("category")
+        #             .execute()
+        #             .data
+        #             or []
+        #         )
+
+        #         available_categories = []
+        #         seen_categories = set()
+
+        #         for row in category_rows:
+        #             category = row.get("category")
+
+        #             if category and category not in seen_categories:
+        #                 available_categories.append(category)
+        #                 seen_categories.add(category)
+
+        #         # Ask the LLM to select only valid catalog categories.
+        #         alternative_prompt = f"""
+        # Select the best clothing categories from this catalog as alternatives
+        # for the user's unavailable request.
+
+        # User request:
+        # {raw_query}
+
+        # Catalog categories:
+        # {available_categories}
+
+        # Rules:
+        # - Select at most 8 categories.
+        # - Select at least 5 when suitable categories exist.
+        # - Rank categories by relevance.
+        # - Prefer clothing/apparel categories.
+        # - Do not select accessories, beauty, electronics, or unrelated categories.
+        # - Return ONLY exact category names from the catalog.
+        # - Never invent, rename, or modify category names.
+        # - If no suitable categories exist, return [].
+
+        # Return ONLY JSON:
+        # {{"categories": ["Category1", "Category2", "Category3"]}}
+        # """
+
+        #         alternative_parser = PydanticOutputParser(
+        #             pydantic_object=OccasionCategoryModel
+        #         )
+
+        #         alternative_result = invoke_with_fallback(
+        #             [
+        #                 (
+        #                     "system",
+        #                     "Select relevant existing clothing catalog categories."
+        #                 ),
+        #                 (
+        #                     "human",
+        #                     alternative_prompt
+        #                 )
+        #             ],
+        #             parser=alternative_parser
+        #         )
+
+        #         category_lookup = {
+        #             category.lower(): category
+        #             for category in available_categories
+        #         }
+
+        #         for category in alternative_result.categories:
+        #             normalized_category = category_lookup.get(
+        #                 category.strip().lower()
+        #             )
+
+        #             if normalized_category:
+        #                 alternative_categories.append(normalized_category)
+
+        #         alternative_categories = alternative_categories[:8]
+
+        #         terminal_search_log(
+        #             f"      Alternative categories : "
+        #             f"{alternative_categories if alternative_categories else 'none'}"
+        #         )
+
+        #     except Exception as e:
+        #         terminal_search_log(
+        #             f"ALTERNATIVE CATEGORY SELECTION FAILED | {e}"
+        #         )
+        #         alternative_categories = []
+
+        #     # Fetch maximum 5 products per selected category.
+        #     # This is intentionally bounded: max 8 × 5 = 40 products.
+        #     alternative_products = []
+
+        #     for category in alternative_categories:
+        #         category_products = (
+        #             supabase
+        #             .table("products")
+        #             .select("*")
+        #             .eq("category", category)
+        #             .order("price", desc=False)
+        #             .limit(5)
+        #             .execute()
+        #             .data
+        #             or []
+        #         )
+
+        #         alternative_products.extend(category_products)
+
+        #     products = alternative_products
+
+        # --- FALLBACK 4: OUT-OF-STOCK ALTERNATIVES ---
+        # 3 closest categories × 5 products
+        # 5 common categories × 6 products
+
         if not products:
 
-            ################# LOGGING CALL ##############
             terminal_search_path(
-                "Store-wide fallback",
-                (
-                    "All previous searches returned 0 → "
-                    "balancing products across available categories"
-                )
+                "Out-of-stock alternatives",
+                "All direct searches returned 0 → selecting closest + common clothing categories"
             )
 
             log_search_step(
                 search_log_handle,
                 "TIER 2 → FALLBACK 4",
-                "All previous searches returned 0 → entering multi-category store balancer",
+                "No matching products → selecting closest + common catalog categories",
                 search_start,
                 0
             )
 
-            log_search(
-                "Investigation: fetching available categories.",
-                handle=search_log_handle
-            )
-            ########################################
-
-            all_cats = supabase.table("products").select("category").execute().data
-            ################### AGAIN LOGGING CALL ###############
-            log_search(
-                f"Investigation: category rows retrieved = {len(all_cats)}",
-                handle=search_log_handle
-            )
-            ####################################################
-            
-            distinct_categories = list(set(p.get("category") for p in all_cats if p.get("category")))
-            ################### AGAIN LOGGING CALL ###############
-            log_search(
-                f"Investigation: distinct categories = {distinct_categories}",
-                handle=search_log_handle
-            )
-
-            # Human terminal explanation
-            terminal_search_log(
-                f"      Categories available : "
-                f"{len(distinct_categories)}"
-            )
-            ####################################################
-
-            balanced_products = []
-            for cat in distinct_categories:
-                ################### AGAIN LOGGING CALL ###############
-                log_search(
-                    f"Investigation: FALLBACK 4 querying category='{cat}' | limit=5",
-                    handle=search_log_handle
-                )
-                ####################################################
-                cat_items = (
-                    supabase.table("products")
-                    .select("*")
-                    .eq("category", cat)
-                    .order("price", desc=False)
-                    .limit(5)
+            try:
+                # ---------------------------------------------------------
+                # Get actual categories from DB
+                # ---------------------------------------------------------
+                category_rows = (
+                    supabase
+                    .table("products")
+                    .select("category")
                     .execute()
                     .data
+                    or []
                 )
-                ################### AGAIN LOGGING CALL ###############
-                log_search(
-                    f"Investigation: category='{cat}' returned {len(cat_items)} products",
-                    handle=search_log_handle
+
+                available_categories = []
+                seen_categories = set()
+
+                for row in category_rows:
+                    category = row.get("category")
+
+                    if category and category not in seen_categories:
+                        available_categories.append(category)
+                        seen_categories.add(category)
+
+                # ---------------------------------------------------------
+                # Ask LLM for:
+                #   3 closest categories
+                #   5 common categories
+                # ---------------------------------------------------------
+                alternative_prompt = f"""
+        Select fallback clothing categories for this unavailable request.
+
+        User request:
+        {raw_query}
+
+        Catalog categories:
+        {available_categories}
+
+        Return JSON:
+        {{
+        "closest_categories": [],
+        "common_categories": []
+        }}
+
+        Rules:
+        - closest_categories: select up to 3 categories most relevant to the request.
+        - common_categories: select up to 5 popular/general clothing categories.
+        - Do not repeat categories between the two lists.
+        - Prefer clothing/apparel categories.
+        - Exclude unrelated categories and accessories.
+        - Use ONLY exact category names from the catalog.
+        - Never invent, rename, or modify category names.
+        - Return fewer categories only if suitable categories do not exist.
+
+        Return ONLY JSON.
+        """
+
+                alternative_parser = PydanticOutputParser(
+                    pydantic_object=AlternativeCategoryModel
                 )
-                ####################################################
 
-                balanced_products.extend(cat_items)
-            products = balanced_products if balanced_products else supabase.table("products").select("*").order("price", desc=False).limit(15).execute().data
+                alternative_result = invoke_with_fallback(
+                    [
+                        (
+                            "system",
+                            "Select closest and common clothing categories from the catalog."
+                        ),
+                        (
+                            "human",
+                            alternative_prompt
+                        )
+                    ],
+                    parser=alternative_parser
+                )
 
-            ################ AGAIN LOGGING CALL ########
-            log_search_query(
-                search_log_handle,
-                "TIER 2 → FALLBACK 4",
-                "Final multi-category balanced result",
-                products,
-                search_start
-            )
-            terminal_search_log(
-                f"      Products collected   : "
-                f"{len(products)}"
-            )
-            ###########################################
+                category_lookup = {
+                    category.lower(): category
+                    for category in available_categories
+                }
+
+                # ---------------------------------------------------------
+                # Normalize closest categories
+                # ---------------------------------------------------------
+                closest_categories = []
+
+                for category in alternative_result.closest_categories:
+                    normalized_category = category_lookup.get(
+                        category.strip().lower()
+                    )
+
+                    if (
+                        normalized_category
+                        and normalized_category not in closest_categories
+                    ):
+                        closest_categories.append(normalized_category)
+
+                closest_categories = closest_categories[:3]
+
+                # ---------------------------------------------------------
+                # Normalize common categories
+                # ---------------------------------------------------------
+                common_categories = []
+
+                for category in alternative_result.common_categories:
+                    normalized_category = category_lookup.get(
+                        category.strip().lower()
+                    )
+
+                    if (
+                        normalized_category
+                        and normalized_category not in closest_categories
+                        and normalized_category not in common_categories
+                    ):
+                        common_categories.append(normalized_category)
+
+                common_categories = common_categories[:5]
+
+                terminal_search_log(
+                    f"      Closest categories : "
+                    f"{closest_categories if closest_categories else 'none'}"
+                )
+
+                terminal_search_log(
+                    f"      Common categories  : "
+                    f"{common_categories if common_categories else 'none'}"
+                )
+
+                # ---------------------------------------------------------
+                # Fetch products
+                # Closest → 5 each
+                # Common  → 6 each
+                # ---------------------------------------------------------
+                alternative_products = []
+
+                for category in closest_categories:
+
+                    category_products = (
+                        supabase
+                        .table("products")
+                        .select("*")
+                        .eq("category", category)
+                        .order("price", desc=False)
+                        .limit(5)
+                        .execute()
+                        .data
+                        or []
+                    )
+
+                    alternative_products.extend(category_products)
+
+                for category in common_categories:
+
+                    category_products = (
+                        supabase
+                        .table("products")
+                        .select("*")
+                        .eq("category", category)
+                        .order("price", desc=False)
+                        .limit(6)
+                        .execute()
+                        .data
+                        or []
+                    )
+
+                    alternative_products.extend(category_products)
+
+                products = alternative_products
+
+                # terminal_search_log(
+                #     f"      Closest products : "
+                #     f"{sum(1 for _ in [])}"  # logging handled by total below
+                # )
+
+                terminal_search_log(
+                    f"      Alternative products : {len(products)}"
+                )
+
+            except Exception as e:
+
+                terminal_search_log(
+                    f"ALTERNATIVE CATEGORY SELECTION FAILED | {e}"
+                )
+
+                products = []
 
     # DYNAMIC SORTING HANDLER
     sort_pref = getattr(intent, 'sorting_preference', None) or getattr(intent, 'sort', None)
@@ -2359,15 +2718,15 @@ def generate_response(state: ShoppingState) -> ShoppingState:
     intent_str = str(intent_val if intent_val is not None else "").lower()
 
     # General turn check — driven entirely by extracted intent
-    # is_general = intent_str in ["general", "greeting", "out_of_scope"]
-    
+    is_general = intent_str in ["general", "greeting", "out_of_scope"]
+    """
     # Safe extraction of route string from state
     route_raw = state.get("route")
     route_val = str(getattr(route_raw, "value", route_raw) if route_raw is not None else "").lower()
 
     # General turn check
     is_general = intent_str in ["general", "greeting", "out_of_scope"] or route_val in ["general", "general_chat"]
-    
+    """
     # 2. PAYMENT URL CHECK
     payment_url = state.get("payment_url") if intent_str == "checkout" else None
 
@@ -2598,11 +2957,20 @@ INSTRUCTIONS:
         print(f"[generate_response Error]: {e}")
         response_text = "Here are top clothing choices based on your request!"
 
-    # ── PERSISTENT TURN SIGNALS ──────────────────────────────────────────────
-    if intent_str not in ("general", "greeting", "out_of_scope"):
-        next_bot_action = "showed_products" if products else "offered_alternatives"
-    else:
-        next_bot_action = state.get("last_bot_action")
+    # # ── PERSISTENT TURN SIGNALS ──────────────────────────────────────────────
+    # if intent_str not in ("general", "greeting", "out_of_scope"):
+    #     next_bot_action = "showed_products" if products else "offered_alternatives"
+
+    # elif intent_str in ("general", "out_of_scope"):
+    #     next_bot_action = "offered_alternatives"
+
+    # else:
+    #     # greeting
+    #     next_bot_action = state.get("last_bot_action")
+    # if intent_str not in ("general", "greeting", "out_of_scope"):
+    #     next_bot_action = "showed_products" if products else "offered_alternatives"
+    # else:
+    #     next_bot_action = state.get("last_bot_action")
 
     ##################### TEMPORARY DEBUG LOGGING #####################
     # next_focus = state.get("active_focus_product")
@@ -2717,7 +3085,7 @@ INSTRUCTIONS:
     products=products,
     similar_products=similar_products,
     intent_str=intent_str,
-    route_val=route_val,
+    # route_val=route_val,
     is_general=is_general,
     payment_url=payment_url,
     sort_val=sort_val,
@@ -2726,7 +3094,7 @@ INSTRUCTIONS:
     api_displayed_products=api_displayed_products,
     api_similar_products=api_similar_products,
     response_text=response_text,
-    next_bot_action=next_bot_action,
+    # next_bot_action=next_bot_action,
     next_focus=next_focus
     )
     ###################################
@@ -2738,7 +3106,7 @@ INSTRUCTIONS:
         "products": products,
         "payment_url": payment_url,
         "selected_product": selected_product,
-        "last_bot_action": next_bot_action,
+        # "last_bot_action": next_bot_action,
         "active_focus_product": next_focus
     }
 
@@ -3140,86 +3508,86 @@ def create_checkout_session(state: ShoppingState, config: RunnableConfig) -> Sho
 
 
 
-@traceable(name="Fetch Featured", description="Fetch top products per category after an out-of-stock denial / alternative offer.")
-@timed_node()
-def fetch_featured(state: ShoppingState) -> ShoppingState:
-    """
-    Surfaces real product cards when the user affirms after a denial.
-    Fetches top 3 products per catalog category from Supabase.
-    """
-    try:
-        # Get distinct categories available in DB
-        all_cats_res = supabase.table("products").select("category").execute()
-        distinct_categories = list(set(
-            p.get("category") for p in (all_cats_res.data or []) if p.get("category")
-        ))
+# @traceable(name="Fetch Featured", description="Fetch top products per category after an out-of-stock denial / alternative offer.")
+# @timed_node()
+# def fetch_featured(state: ShoppingState) -> ShoppingState:
+#     """
+#     Surfaces real product cards when the user affirms after a denial.
+#     Fetches top 3 products per catalog category from Supabase.
+#     """
+#     try:
+#         # Get distinct categories available in DB
+#         all_cats_res = supabase.table("products").select("category").execute()
+#         distinct_categories = list(set(
+#             p.get("category") for p in (all_cats_res.data or []) if p.get("category")
+#         ))
 
-        featured: list = []
-        for cat in distinct_categories:
-            cat_items = (
-                supabase.table("products")
-                .select("*")
-                .eq("category", cat)
-                .order("price", desc=False)
-                .limit(3)
-                .execute()
-                .data
-            )
-            if cat_items:
-                featured.extend(cat_items)
+#         featured: list = []
+#         for cat in distinct_categories:
+#             cat_items = (
+#                 supabase.table("products")
+#                 .select("*")
+#                 .eq("category", cat)
+#                 .order("price", desc=False)
+#                 .limit(3)
+#                 .execute()
+#                 .data
+#             )
+#             if cat_items:
+#                 featured.extend(cat_items)
 
-        # Fallback: raw limit query if category enumeration fails or returns empty
-        if not featured:
-            featured = (
-                supabase.table("products")
-                .select("*")
-                .order("price", desc=False)
-                .limit(12)
-                .execute()
-                .data
-            )
-            ############### LOGGING CALL ################
-            log_fetch_featured(
-                distinct_categories=distinct_categories,
-                featured_count=len(featured),
-                fallback_used=True
-            )
-        else:
-            log_fetch_featured(
-                distinct_categories=distinct_categories,
-                featured_count=len(featured),
-                fallback_used=False
-            )
-        #############################################
-    except Exception as e:
-        print(f"[fetch_featured error]: {e}")
-        featured = []
+#         # Fallback: raw limit query if category enumeration fails or returns empty
+#         if not featured:
+#             featured = (
+#                 supabase.table("products")
+#                 .select("*")
+#                 .order("price", desc=False)
+#                 .limit(12)
+#                 .execute()
+#                 .data
+#             )
+#             ############### LOGGING CALL ################
+#             log_fetch_featured(
+#                 distinct_categories=distinct_categories,
+#                 featured_count=len(featured),
+#                 fallback_used=True
+#             )
+#         else:
+#             log_fetch_featured(
+#                 distinct_categories=distinct_categories,
+#                 featured_count=len(featured),
+#                 fallback_used=False
+#             )
+#         #############################################
+#     except Exception as e:
+#         print(f"[fetch_featured error]: {e}")
+#         featured = []
 
-        ################ LOGGING CALL ################
-        log_fetch_featured(
-            distinct_categories=[],
-            featured_count=0,
-            fallback_used=False,
-            error=str(e)
-        )
-        #########################################
+#         ################ LOGGING CALL ################
+#         log_fetch_featured(
+#             distinct_categories=[],
+#             featured_count=0,
+#             fallback_used=False,
+#             error=str(e)
+#         )
+#         #########################################
 
-    # # Inject a RECOMMEND intent so generate_response produces a showcase reply
-    # featured_intent = ShoppingIntentModel(intent=IntentType.RECOMMEND)
+#     # # Inject a RECOMMEND intent so generate_response produces a showcase reply
+#     # featured_intent = ShoppingIntentModel(intent=IntentType.RECOMMEND)
 
-    #Instant response without making a second heavy 9s LLM call
-    text_reply = (
-        "Sure! Here are some of our top trending fashion picks for you across our catalog. "
-        "Tap any item to explore details!"
-    )
+#     #Instant response without making a second heavy 9s LLM call
+#     text_reply = (
+#         "Sure! Here are some of our top trending fashion picks for you across our catalog. "
+#         "Tap any item to explore details!"
+#     )
 
-    return {
-        "response": text_reply,
-        "products": featured,
-        "displayed_products": featured,
-        "similar_products": [],
-        "intent": "showed_products"
-    }
+#     return {
+#         "response": text_reply,
+#         "products": featured,
+#         "displayed_products": featured,
+#         "similar_products": [],
+#         "intent": "showed_products"
+#     }
 
 
 
@@ -3230,14 +3598,14 @@ graph = StateGraph(ShoppingState)
 
 # 1. NODES
 graph.add_node("reset_turn_slots", reset_turn_slots)      # Ephemeral slot reset pre-step
-graph.add_node("router", router)
+# graph.add_node("router", router)
 graph.add_node("general_chat", general_chat)
 graph.add_node("extract_intent", extract_intent)
-graph.add_node("context_decision", context_decision)
+# graph.add_node("context_decision", context_decision)
 graph.add_node("search_products", search_product)
 graph.add_node("create_checkout_session", create_checkout_session)
 graph.add_node("generate_response", generate_response)
-graph.add_node("fetch_featured", fetch_featured)          # Affirmative follow-up showcase node
+# graph.add_node("fetch_featured", fetch_featured)          # Affirmative follow-up showcase node
 
 # 2. Edges
 graph.add_edge(START, "reset_turn_slots")
@@ -3246,8 +3614,11 @@ graph.add_edge(START, "reset_turn_slots")
 # graph.add_edge("reset_turn_slots", "router")
 # graph.add_edge("reset_turn_slots", "extract_intent")
 
-graph.add_edge("reset_turn_slots", "router")
-graph.add_edge("router", "context_decision")
+# graph.add_edge("reset_turn_slots", "router")
+# graph.add_edge("router", "context_decision")
+# graph.add_edge("reset_turn_slots", "router")
+# graph.add_edge("router", "extract_intent")
+graph.add_edge("reset_turn_slots", "extract_intent")
 
 # ── 1. ROUTER GATE FUNCTION (Gate 1) ──────────────────────────────────────────
 def route_post_sync(state: ShoppingState) -> str:
@@ -3280,10 +3651,11 @@ def route_post_sync(state: ShoppingState) -> str:
 # ── 2. INTENT GATE FUNCTION (Gate 2) ──────────────────────────────────────────
 def route_after_intent(state: ShoppingState) -> str:
     """
-    Evaluates extracted intent and extracted slots:
+    Routes extracted intent:
     - Checkout -> create_checkout_session
-    - Affirmation ('yes'/'sure' without product filters) -> fetch_featured
-    - Product Search (with color/size/category filters) -> search_products
+    - Existing result-pool operations -> generate_response
+    - General/greeting/out-of-scope -> general_chat
+    - Search/recommendation -> search_products
     """
 
     ################ TEMPORARY DEBUG LOGGING #####################
@@ -3296,7 +3668,19 @@ def route_after_intent(state: ShoppingState) -> str:
     raw_intent = state.get("intent")
     intent_val = getattr(raw_intent, "intent", raw_intent)
     intent_str = str(getattr(intent_val, "value", intent_val) or "").lower()
-    last_action = state.get("last_bot_action")
+    # last_action = state.get("last_bot_action")
+
+    if intent_str in ("general", "greeting", "out_of_scope"):
+        next_step = "general_chat"
+
+        log_route_after_intent_state(
+            intent=intent_str,
+            # last_action=last_action,
+            has_specific_filters=False,
+            next_node=next_step
+        )
+
+        return next_step
 
 ################ Logging call ######################
 
@@ -3412,21 +3796,21 @@ def route_after_intent(state: ShoppingState) -> str:
     elif intent_str == "checkout":
         next_step = "create_checkout_session"
 
-    elif (
-        last_action in ("offered_alternatives", "denied_oos")
-        and not has_specific_filters
-    ):
-        next_step = "fetch_featured"
+    # # elif (
+    # #     last_action in ("offered_alternatives", "denied_oos")
+    # #     and not has_specific_filters
+    # ):
+    # #     next_step = "fetch_featured"
 
-    elif intent_str == "recommend" and not has_specific_filters:
-        next_step = "fetch_featured"
+    # elif intent_str == "recommend" and not has_specific_filters:
+    #     next_step = "fetch_featured"
 
     else:
         next_step = "search_products"
 
     log_route_after_intent_state(
         intent=intent_str,
-        last_action=last_action,
+        # last_action=last_action,
         has_specific_filters=has_specific_filters,
         next_node=next_step
     )
@@ -3437,14 +3821,14 @@ def route_after_intent(state: ShoppingState) -> str:
 
 # ── 3. GRAPH INITIALIZATION & CONDITIONAL EDGES ──────────────────────────────
 # Gate 1: After Router & Context Decision
-graph.add_conditional_edges(
-    "context_decision",
-    route_post_sync,
-    {
-        "general_chat": "general_chat",
-        "extract_intent": "extract_intent",
-    }
-)
+# graph.add_conditional_edges(
+#     "context_decision",
+#     route_post_sync,
+#     {
+#         "general_chat": "general_chat",
+#         "extract_intent": "extract_intent",
+#     }
+# )
 
 # Gate 2: After Intent Extraction
 graph.add_conditional_edges(
@@ -3453,15 +3837,16 @@ graph.add_conditional_edges(
     {
         "create_checkout_session": "create_checkout_session",
         "search_products": "search_products",
-        "fetch_featured": "fetch_featured",
+        # "fetch_featured": "fetch_featured",
         "generate_response": "generate_response",
+        "general_chat": "general_chat",
     }
 )
 
 # 4. TERMINAL EDGES
 graph.add_edge("search_products", "generate_response")
 graph.add_edge("create_checkout_session", "generate_response")
-graph.add_edge("fetch_featured", "generate_response")
+# graph.add_edge("fetch_featured", "generate_response")
 graph.add_edge("general_chat", END)
 graph.add_edge("generate_response", END)
 
