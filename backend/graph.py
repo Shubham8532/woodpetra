@@ -33,12 +33,59 @@ from backend.prompt import (
     RESPONSE_PROMPT
 )
 
+from concurrent.futures import ThreadPoolExecutor
+
 razorpay_client = razorpay.Client(
     auth=(os.environ.get("RAZORPAY_KEY_ID"), os.environ.get("RAZORPAY_KEY_SECRET"))
 )
 
+############### TEMPORARY -- REMOVE AFTER TEST #####
+
+import socket
+import time
+import httpx
+
+def test_http_connection():
+    host = "api.groq.com"
+    port = 443
+
+    print("\n" + "=" * 70)
+    print("HTTP CONNECTION TEST")
+    print("=" * 70)
+
+    # DNS
+    start = time.perf_counter()
+    ip = socket.gethostbyname(host)
+    end = time.perf_counter()
+
+    print(f"[DNS]  {end - start:.3f}s | {ip}")
+
+    # TCP
+    start = time.perf_counter()
+
+    sock = socket.create_connection((host, port), timeout=10)
+
+    end = time.perf_counter()
+
+    print(f"[TCP]  {end - start:.3f}s")
+
+    sock.close()
+
+    # HTTPS request
+    start = time.perf_counter()
+
+    with httpx.Client(timeout=10.0) as client:
+        response = client.get("https://api.groq.com")
+
+    end = time.perf_counter()
+
+    print(f"[HTTPS] {end - start:.3f}s")
+    print(f"[HTTPS] status = {response.status_code}")
+
+    print("=" * 70)
 
 
+test_http_connection()
 
 @timed_node()
 def invoke_with_fallback(messages, parser=None):
@@ -51,7 +98,12 @@ def invoke_with_fallback(messages, parser=None):
     # ============================================================
     primary_start = time.perf_counter()
     try:
+        print(f"[DEBUG] BEFORE 20B INVOKE | {primary_start:.6f}")
+
         raw_res = llm_20B.invoke(messages)
+
+        after_invoke = time.perf_counter()
+        print(f"[DEBUG] AFTER 20B INVOKE  | {after_invoke:.6f}")
         ############ TEMPORARY #################
         print(
             "[20B META]",
@@ -636,21 +688,31 @@ def build_conversation(history, max_turns=6):
             else clean_response
         )
 
+        slot_fields = [
+            ("Product", product_name),
+            ("Category", category),
+            ("Keyword", keyword),
+            ("Color", color),
+            ("Material", material),
+            ("Size", size),
+            ("Fit", fit),
+            ("Brands", brands),
+            ("Gender", gender),
+            ("Price min", price_min),
+            ("Price max", price_max),
+            ("Sort", sort),
+            ("Occasion", occasion),
+        ]
+
+        slot_lines = "\n".join(
+            f"  {label}: {value}"
+            for label, value in slot_fields
+            if value is not None
+        )
+
         conversation.append(
             f"Previous Turn Context:\n"
-            f"  Product: {product_name}\n"
-            f"  Category: {category}\n"
-            f"  Keyword: {keyword}\n"
-            f"  Color: {color}\n"
-            f"  Material: {material}\n"
-            f"  Size: {size}\n"
-            f"  Fit: {fit}\n"
-            f"  Brands: {brands}\n"
-            f"  Gender: {gender}\n"
-            f"  Price min: {price_min}\n"
-            f"  Price max: {price_max}\n"
-            f"  Sort: {sort}\n"
-            f"  Occasion: {occasion}\n"
+            f"{slot_lines}\n"
             f"User: {query}\n"
             f"Assistant: {short_response}"
         )
@@ -683,9 +745,35 @@ def build_conversation(history, max_turns=6):
 # For 7B model compatibility
 # Output parser instance for standard text parsing fallback
 intent_parser = PydanticOutputParser(pydantic_object=ShoppingIntentModel)
+# INTENT_FORMAT_INSTRUCTIONS = intent_parser.get_format_instructions()
 
+############# TEMPORAY--> Testing ############
+INTENT_FORMAT_INSTRUCTIONS = """
+Return exactly one JSON object with these fields:
 
-#==========================================
+{
+  "intent": "search|recommend|details|compare|checkout|greeting|general",
+  "keyword": string|null,
+  "category": string|null,
+  "product_name": string|null,
+  "color": string|null,
+  "material": string|null,
+  "size": "XS|S|M|L|XL|XXL"|null,
+  "fit": string|null,
+  "brands": [string]|null,
+  "gender": "male|female|unisex"|null,
+  "price_min": integer|null,
+  "price_max": integer|null,
+  "sort": "price_asc|price_desc"|null,
+  "occasion": string|null
+}
+
+Use null for absent values.
+Return all fields exactly once.
+Do not add fields or omit fields.
+Return raw JSON only; no markdown or explanation.
+"""
+
 @traceable(name="Extract Intent", description="Extract shopping intent from the user's query using the ShoppingIntentModel.")
 @timed_node()
 def extract_intent(
@@ -734,7 +822,8 @@ History (Last 8 turns):
         f"dynamic={len(system_prompt) - len(INTENT_PROMPT)} chars"
     )
     ##############
-    format_instructions = intent_parser.get_format_instructions()
+    format_instructions = INTENT_FORMAT_INSTRUCTIONS
+    # format_instructions = INTENT_JSON_FORMAT
     system_with_schema = (
         system_prompt + f"\n\nOUTPUT FORMAT:\nReturn ONLY a raw JSON object matching the schema below (no markdown, no backticks).\n{format_instructions}"
     )
@@ -753,6 +842,13 @@ History (Last 8 turns):
     )
     ####################
 
+    print(
+        f"[INTENT TOKENS APPROX] "
+        f"prompt_chars={len(system_with_schema)} | "
+        f"history_chars={len(history_text)} | "
+        f"schema_chars={len(format_instructions)} | "
+        f"base_chars={len(INTENT_PROMPT)}"
+    )
     
     try:
         result = invoke_with_fallback(
@@ -770,7 +866,14 @@ History (Last 8 turns):
 # query does not explicitly introduce another category.
     # if not result.category and active_category:
     #     result.category = active_category
-    if not result.category and active_category and not result.occasion:
+    # if not result.category and active_category and not result.occasion:
+    #     result.category = active_category
+    if (
+        not result.category
+        and active_category
+        and not result.occasion
+        and not result.keyword
+    ):
         result.category = active_category
 
     # Directly map clean intent to ephemeral turn_slots (Zero Manual Pronoun Filtering)
@@ -1195,6 +1298,9 @@ def search_product(state: ShoppingState) -> ShoppingState:
     products = []
     matched_categories = []
     alternative_categories = []
+
+    # Track whether Fallback 4 supplied the products.
+    fallback4_used = False
 
     if getattr(intent, "occasion", None):
         terminal_search_log(
@@ -2175,7 +2281,7 @@ Return ONLY JSON:
         # 5 common categories × 6 products
 
         if not products:
-
+            fallback4_used = True
             terminal_search_path(
                 "Out-of-stock alternatives",
                 "All direct searches returned 0 → selecting closest + common clothing categories"
@@ -2316,45 +2422,80 @@ Return ONLY JSON:
                 )
 
                 # ---------------------------------------------------------
+                # Fetch all fallback categories in parallel.
+                # Preserve the original category ordering.
+                # ---------------------------------------------------------
+                category_jobs = (
+                    [(category, 5) for category in closest_categories]
+                    + [(category, 6) for category in common_categories]
+                )
+
+                def fetch_category_products(job):
+                    category, limit = job
+
+                    return (
+                        supabase
+                        .table("products")
+                        .select("*")
+                        .eq("category", category)
+                        .order("price", desc=False)
+                        .limit(limit)
+                        .execute()
+                        .data
+                        or []
+                    )
+
+                with ThreadPoolExecutor(max_workers=min(8, len(category_jobs) or 1)) as executor:
+                    category_results = list(
+                        executor.map(fetch_category_products, category_jobs)
+                    )
+
+                alternative_products = []
+
+                for category_products in category_results:
+                    alternative_products.extend(category_products)
+
+                products = alternative_products
+                # ---------------------------------------------------------
                 # Fetch products
                 # Closest → 5 each
                 # Common  → 6 each
                 # ---------------------------------------------------------
-                alternative_products = []
+                # alternative_products = []
 
-                for category in closest_categories:
+                # for category in closest_categories:
 
-                    category_products = (
-                        supabase
-                        .table("products")
-                        .select("*")
-                        .eq("category", category)
-                        .order("price", desc=False)
-                        .limit(5)
-                        .execute()
-                        .data
-                        or []
-                    )
+                #     category_products = (
+                #         supabase
+                #         .table("products")
+                #         .select("*")
+                #         .eq("category", category)
+                #         .order("price", desc=False)
+                #         .limit(5)
+                #         .execute()
+                #         .data
+                #         or []
+                #     )
 
-                    alternative_products.extend(category_products)
+                #     alternative_products.extend(category_products)
 
-                for category in common_categories:
+                # for category in common_categories:
 
-                    category_products = (
-                        supabase
-                        .table("products")
-                        .select("*")
-                        .eq("category", category)
-                        .order("price", desc=False)
-                        .limit(6)
-                        .execute()
-                        .data
-                        or []
-                    )
+                #     category_products = (
+                #         supabase
+                #         .table("products")
+                #         .select("*")
+                #         .eq("category", category)
+                #         .order("price", desc=False)
+                #         .limit(6)
+                #         .execute()
+                #         .data
+                #         or []
+                #     )
 
-                    alternative_products.extend(category_products)
+                #     alternative_products.extend(category_products)
 
-                products = alternative_products
+                # products = alternative_products
 
                 # terminal_search_log(
                 #     f"      Closest products : "
@@ -2481,7 +2622,13 @@ Return ONLY JSON:
     # Updated:
     # normal category-less search → old behavior remains
     # occasion search → don't randomly choose category from product #1
-    if not category_to_recommend and products and not getattr(intent, "occasion", None):
+    if (
+        not category_to_recommend
+        and products
+        and not fallback4_used
+        and not getattr(intent, "occasion", None)
+    ):
+        category_to_recommend = products[0].get("category")
         ############## AGAIN LOGGING CALL ###############
         log_search(
             "Investigation: category not present in intent.",
@@ -2493,7 +2640,7 @@ Return ONLY JSON:
             handle=search_log_handle
         )
         #############################################
-        category_to_recommend = products[0].get("category")
+        # category_to_recommend = products[0].get("category")
         ############## AGAIN LOGGING CALL ###############
         log_search(
             f"Investigation: inferred recommendation category = {category_to_recommend}",

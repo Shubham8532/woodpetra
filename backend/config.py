@@ -33,7 +33,8 @@ FALLBACK_MODEL_120B = os.getenv("FALLBACK_MODEL_NAME", "openai/gpt-oss-120b")
 llm_20B = ChatGroq(
     model=PRIMARY_MODEL,
     temperature=0,
-    max_tokens=2048
+    max_tokens=2048,
+    max_retries=0,
 )
 # llm_70B= ChatGroq(model_name=FALLBACK_MODEL_70B, temperature=0)
 llm_120B = ChatGroq(model_name=FALLBACK_MODEL_120B, temperature=0)
